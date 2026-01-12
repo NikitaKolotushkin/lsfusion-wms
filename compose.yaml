@@ -14,7 +14,7 @@ services:
   logics:
     image: lsfusion/mycompany:6.1
     volumes:
-      - docker-server:/lsfusion
+      - ./docker-server:/lsfusion
 
   server:
     image: lsfusion/server:6.1
@@ -22,10 +22,13 @@ services:
       - db
       - logics
     volumes:
-      - docker-server:/lsfusion
+      - ./docker-server:/lsfusion
     environment:
       - DB_SERVER=db
       - DB_PASSWORD=11111
+      - USER_SETLANGUAGE=ru
+      - USER_SETCOUNTRY=RU 
+      - JAVA_OPTS=-Xmx10g
 
   client:
     image: lsfusion/client:6.1
@@ -37,3 +40,4 @@ services:
       - "8080:8080"
     environment:
       - APP_SERVER=server
+      
