@@ -2,6 +2,7 @@
 test/
 docker-client-conf/
 docker-db/
+docker-server/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
