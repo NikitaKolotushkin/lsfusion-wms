@@ -1,0 +1,121 @@
+MODULE TimeEntryDefault;
+
+REQUIRE TimeEntry, TimeEntryTotalDashboard;
+
+NAMESPACE Project;
+
+CLASS TimeEntryDefault 'Отметки времени по умолчанию';
+TABLE timeEntryDefault(TimeEntryDefault);
+
+date 'Дата' = DATA DATE (TimeEntryDefault) NONULL;
+
+employee = DATA Employee(TimeEntryDefault);
+nameEmployee 'Сотрудник' (TimeEntryDefault d) = name(employee(d));
+
+timePercent 'Процент времени' = DATA NUMERIC[6,2](TimeEntryDefault, Project);
+timePercent 'Процент времени' (TimeEntryDefault t) = GROUP SUM timePercent(t, Project p);
+
+CONSTRAINT timePercent(TimeEntryDefault t) AND NOT timePercent(t) == 100.0 MESSAGE 'Сумма процентов отметки времени по умолчанию не равна 100%';
+
+percents 'Проценты времени по проектам' (TimeEntryDefault t) = GROUP CONCAT name(Project p) + ':' + round0(timePercent(t, p)) + '%', ', ' ORDER DESC timePercent(t, p) CHARWIDTH 50;
+
+timeEntryDefault (Employee e, DATE d) = GROUP LAST TimeEntryDefault t ORDER date(t), t IF date(t) <= d BY employee(t);
+timePercent 'Процент времени' (Employee e, Project p, DATE d) = timePercent(timeEntryDefault(e, d), p);
+
+FORM timePercent 'Процент времени'
+    OBJECTS t = TimeEntryDefault PANEL 
+    OBJECTS p = Project
+    PROPERTIES READONLY id(p), 'Проект' = name(p), nameCustomer(p)
+    PROPERTIES timePercent(t, p)
+    ORDERS name(p)
+    
+    PROPERTIES sum 'Сумма, %' = GROUP SUM timePercent(t, Project pp)
+    
+    FILTERGROUP active FILTER 'Активные' NOT inactive(p) DEFAULT 
+    FILTERGROUP in FILTER 'Выбранные' timePercent(t, p)
+;
+
+DESIGN timePercent {
+    FILTERGROUPS (p) {
+        MOVE PROPERTY (sum) FIRST;
+    }
+}
+
+FORM timeEntryDefault 'Отметки времени по умолчанию'
+    OBJECTS e = Employee
+    PROPERTIES (e) READONLY name
+    ORDERS name(e)
+    
+    OBJECTS t = TimeEntryDefault
+    PROPERTIES (t) date, percents ON CHANGE { SHOW timePercent OBJECTS t = t; }, NEW, DELETE
+    ORDERS date(t)
+    FILTERS employee(t) == e
+;
+
+default 'Авто' = DATA BOOLEAN (TimeEntry);
+
+emptyHours (Employee e, DATE d) = workingHours(d) (-) totalHours(e, d);
+
+createTimeEntries 'Заполнить время' (Employee e, DATE df, DATE dt) {
+    NEWSESSION {
+        FOR iterate(DATE d, df, dt) AND workingHours(d) AND NOT totalHours(e, d) >= workingHours(d) DO {
+        
+            LOCAL hours = NUMERIC[7,2] (Project);
+            hours(Project p) <- PARTITION UNGROUP emptyHours
+                                          PROPORTION STRICT ROUND(2) timePercent(e, p, d)
+                                          ORDER p
+                                          BY e, d;
+                                          
+            FOR timePercent(e, Project p, d) AND hours(p) DO NEW t = TimeEntry {
+            
+                default(t) <- TRUE;
+                date(t) <- d;
+                employee(t) <- e;
+                project(t) <- p;
+                hours(t) <- hours(p);
+                comments(t) <- 'Авто';
+            }
+        }
+    APPLY;
+    }
+}
+
+filterEmployee = DATA LOCAL Employee();
+nameFilterEmployee 'Сотрудник' () = name(filterEmployee()) CHARWIDTH 20;
+
+createTimeEntries (DATE df, DATE dt) {
+    FOR active(Employee e) AND (e == filterEmployee() OR (NOT filterEmployee() AND e IS Employee)) DO {
+        createTimeEntries(e, df, dt);
+    }
+}
+
+FORM createTimeEntries 'Заполнить время'
+    OBJECTS dates = (df = DATE, dt = DATE) PANEL 
+    PROPERTIES 'Дата с' = VALUE (df), 'Дата по' = VALUE (dt), nameFilterEmployee() DRAW dates
+    
+    EVENTS ON OK {
+        createTimeEntries(df, dt);
+    }
+;
+
+showCreateTimeEntries 'Заполнить время' (Employee e) {
+    filterEmployee() <- e;
+    SHOW createTimeEntries;
+}
+
+EXTEND FORM timeEntryDashboard 
+    PROPERTIES (e) TOOLBAR showCreateTimeEntries
+    PROPERTIES READONLY default(t)
+;
+
+NAVIGATOR {
+    project {
+        NEW timeEntryDefault;
+    }
+}
+
+currentTimeEntryDefault (Employee e) = GROUP LAST TimeEntryDefault t ORDER date(t),t BY employee(t);
+
+WHEN LOCAL CHANGED (employee(TimeEntry t)) AND NOT CHANGED (project(t)) AND (GROUP SUM 1 IF timePercent(currentTimeEntryDefault(employee(t)), Project p)) == 1 DO {
+    project(t) <- GROUP MAX Project p IF timePercent(currentTimeEntryDefault(employee(t)), p);
+}

@@ -1,0 +1,260 @@
+MODULE Debt;
+
+REQUIRE Dashboard, Contract, Act, Payment;
+
+NAMESPACE Contract;
+
+CLASS Debt 'Задолженность';
+TABLE debt (Debt);
+
+date 'Дата' = DATA DATE(Debt);
+sum 'Сумма' = DATA NUMERIC[16,5](Debt);
+inactive 'Неактивная задолженность' = DATA BOOLEAN (Debt);
+
+contract = DATA Contract(Debt) NONULL DELETE;
+numberContract 'Номер договора' (Debt d) = number(contract(d));
+nameContract 'Наименование договора' (Debt d) = name(contract(d));
+contractType (Debt d) = type(contract(d));
+nameContractType 'Тип договора' (Debt d) = nameType(contract(d));
+nameCustomer 'Клиент' (Debt d) = nameCustomer(contract(d));
+nameLegalEntity 'Организация' (Debt d) = nameLegalEntity(contract(d));
+nameCompany 'Компания' (Debt d) = nameCompany(contract(d));
+
+customer (Debt d) = customer(contract(d));
+
+CONSTRAINT contract(Debt d) AND NOT dateSigningCustomer(contract(d)) MESSAGE 'Нельзя вводить задолженности для договора без даты подписания клиентом';
+
+note 'Примечание' = DATA ISTRING[250](Debt) CHARWIDTH 20;
+
+problem 'Проблемная' = DATA BOOLEAN (Debt);
+
+currency (Debt d) = currency(contract(d));
+shortNameCurrency 'Валюта (сокр.)' (Debt p) = shortName(currency(p));
+
+dataDateCurrency 'Дата курса' = DATA DATE (Debt);
+dateCurrency 'Дата курса' (Debt d) = OVERRIDE dataDateCurrency(d), date(d);
+
+sumCurrency 'Сумма в валюте' (Debt p) = DATA NUMERIC[16,5](Debt);
+
+WHEN LOCAL (SETCHANGED (sumCurrency(Debt d)) OR CHANGED (currency(d)) OR SETCHANGED(dateCurrency(d))) AND NOT CHANGED (sum(d)) AND sumCurrency(d) DO {
+    sum(d) <- round2(sumCurrency(d) / OVERRIDE (rateOn(defaultTypeExchange(), currency(d), dateCurrency(d))), 1);
+}
+
+act = DATA Act (Debt);
+numberAct 'Номер акта' (Debt d) = number(act(d));
+dateAct 'Дата акта' (Debt d) = date(act(d));
+
+CONSTRAINT act(Debt d) AND NOT contract(d) == contract(act(d)) CHECKED BY act[Debt] MESSAGE 'Договор акта не соответствует договору';
+CONSTRAINT [GROUP SUM 1 BY act(Debt d)](Act a) == 1 AND NOT sum(a) == [GROUP SUM sum(Debt d) BY act(d)](a) 
+    MESSAGE 'При одной задолженности для акта сумма задолженности должна совпадать с суммой акта';
+
+FORM debt 'Задолженность'
+    OBJECTS o = Debt PANEL
+    PROPERTIES(o) numberContract, date, shortNameCurrency, sumCurrency, sum, dateCurrency, note, problem
+    
+    EDIT Debt OBJECT o
+;
+
+FORM debts 'Задолженность'
+    OBJECTS o = Debt
+    PROPERTIES(o) READONLY numberContract, nameContract, date, shortNameCurrency, sumCurrency, sum, dateCurrency, note, problem
+    PROPERTIES(o) NEWSESSION NEW, EDIT, DELETE
+;
+
+FORM dialogDebts 'Задолженность'
+    OBJECTS o = Debt
+    PROPERTIES(o) READONLY numberContract, nameContract, date, shortNameCurrency, sumCurrency, sum, dateCurrency, note, problem
+    
+    LIST Debt OBJECT o
+;
+
+
+sumMonth 'Сумма ежемесячного платежа' = DATA NUMERIC[16,5](Contract) CHARWIDTH 10;
+paymentDay 'День платежа' = DATA INTEGER (Contract) CHARWIDTH 2;
+currencyDay 'День курса' = DATA INTEGER (Contract) CHARWIDTH 2;
+prevMonthCurrency 'Предыдущий месяц курса' = DATA BOOLEAN (Contract);
+
+countMonthsDebt 'Кол-во месяцев для формирования задолженности' = DATA INTEGER () CHARWIDTH 3;
+
+EXTEND FORM options PROPERTIES countMonthsDebt();
+DESIGN options { commons { MOVE PROPERTY (countMonthsDebt()); } }
+
+text(INTEGER i) = lpad(TEXT (i), 2, '0');
+debt (DATE d, Contract c) = GROUP MAX Debt t BY date(t), contract(t);
+
+createDebts 'Сгенерировать задолженности' (Contract c) {
+    
+    IF NOT countMonthsDebt() THEN {
+        MESSAGE 'Не задано кол-во месяцев для формирования задолженности';
+    }
+    ELSE {
+        LOCAL month = INTEGER ();
+        LOCAL year = INTEGER ();
+        LOCAL date = DATE ();
+        LOCAL dateCur = DATE ();
+        LOCAL monthCur = INTEGER ();
+        LOCAL yearCur = INTEGER ();
+        
+        DELETE Debt d WHERE contract(d) == c AND date(d) > currentDate();
+        
+        month() <- extractMonthNumber(currentDate());
+        year() <- extractYear(currentDate());
+        
+        monthCur() <- CASE WHEN NOT prevMonthCurrency(c) THEN month()
+                           WHEN (prevMonthCurrency(c) AND (month() == 1)) THEN 12
+                           ELSE month() (-) 1;
+        
+        yearCur() <- CASE WHEN monthCur() == 12 THEN year() (-) 1 ELSE year();
+        
+        FOR iterate(INTEGER i, 1, countMonthsDebt()) DO {
+                        
+            TRY {
+                date() <- toDateFormat(text(paymentDay(c)) + text(month()) + year(), 'DDMMYYYY');
+                dateCur() <- toDateFormat(text(currencyDay(c)) + text(monthCur()) + yearCur(), 'DDMMYYYY');
+            }
+            CATCH {
+                date() <- lastDayOfMonth(toDateFormat('01' + text(month()) + year(), 'DDMMYYYY'));
+                dateCur() <- lastDayOfMonth(toDateFormat('01' + text(monthCur()) + yearCur(), 'DDMMYYYY'));
+            }
+                
+            IF NOT debt(date(), c) THEN NEW d = Debt {
+                contract(d) <- c;
+                date(d) <- date();
+            }
+            
+            FOR Debt d = debt(date(), c) DO {
+            
+                IF inCurrency(c) THEN {
+                    sumCurrency(d) <- sumMonth(c);
+                    dataDateCurrency(d) <- dateCur();
+                }
+                ELSE {
+                    sum(d) <- sumMonth(c);
+                }
+            }
+
+            month() <- month() (+) 1;
+            monthCur() <- monthCur() (+) 1;
+            
+            IF month() > 12 THEN {
+                month() <- month() - 12;
+                year() <- year() + 1;
+            }
+            IF monthCur() > 12 THEN {
+                monthCur() <- monthCur() - 12;
+                yearCur() <- yearCur() + 1;
+            }
+        }
+    }
+}
+
+createFullDebt 'Сгенерировать задолженность' (Contract c) {
+    NEW d = Debt {
+    
+        contract(d) <- c;
+        date(d) <- date(c);
+        
+        IF inCurrency(c) THEN {
+            sumCurrency(d) <- sumCurrency(c);
+        }
+        ELSE {
+            sum(d) <- sum(c);
+        }
+    }
+}
+
+EXTEND FORM dialogContracts PROPERTIES sumMonth(o) BEFORE nameType(o);
+
+EXTEND FORM contract 
+    PROPERTIES (o) sumMonth, paymentDay, currencyDay SHOWIF inCurrency(o), prevMonthCurrency SHOWIF inCurrency(o), createDebts SHOWIF (sumMonth(o) AND paymentDay(o)), createFullDebt
+    OBJECTS d = Debt
+    PROPERTIES (d) date, sumCurrency SHOWIF inCurrency(o), sum, dateCurrency SHOWIF inCurrency(o), note, problem, NEW, DELETE
+    ORDERS date(d)
+    FILTERS contract(d) == o
+;
+
+DESIGN contract {
+    details {
+        NEW debt {
+            caption = 'Задолженность';
+            NEW sums {
+                NEW firstRow {
+                    horizontal = TRUE;
+                    caption = 'Стоимость';
+                    MOVE PROPERTY (sum(o));
+                    MOVE PROPERTY (shortNameCurrency(o));
+                    MOVE PROPERTY (inCurrency(o));
+                    MOVE PROPERTY (sumCurrency(o));
+                    MOVE PROPERTY (createFullDebt(o));
+                }
+                NEW secondRow {
+                    caption = 'Задолженность';
+                    horizontal = TRUE;
+                    MOVE PROPERTY (sumMonth(o));
+                    MOVE PROPERTY (paymentDay(o));
+                    MOVE PROPERTY (currencyDay(o));
+                    MOVE PROPERTY (prevMonthCurrency(o));
+                    MOVE PROPERTY (createDebts(o));
+                }
+            }
+            MOVE BOX (d);
+        }
+    }
+}
+
+sumDebt 'Сумма задолженности' (Month m, INTEGER y, ContractType t) = GROUP SUM sum(Debt d) BY extractMonth(date(d)), extractYear(date(d)), type(contract(d));
+sumDebt 'Сумма задолженности' (Month m, INTEGER y) = GROUP SUM sum(Debt d) BY extractMonth(date(d)), extractYear(date(d));
+sumDebt 'Сумма задолженности' (INTEGER y, ContractType t) = GROUP SUM sum(Debt d) BY extractYear(date(d)), type(contract(d));
+
+paid 'Оплачено' (Month m, INTEGER y) = GROUP SUM sum(Payment p) IF NOT skipReceipt(p) BY extractMonth(date(p)), extractYear(date(p));
+
+FORM debtsPlan 'План платежей'
+    
+    OBJECTS y = INTEGER PANEL 
+    PROPERTIES 'Год' = VALUE (y)
+    
+    OBJECTS t = ContractType
+    OBJECTS m = Month
+    PROPERTIES READONLY number(m), 'Месяц' = name(m), sumDebt(m, y), sumDebt(m, y, t) COLUMNS (t) HEADER name(t), paid(m, y)
+    ORDERS number(m)
+    FILTERS sumDebt(y, t)
+    
+    OBJECTS d = Debt
+    PROPERTIES (d) READONLY date, numberContract, nameContract, nameContractType, nameCustomer, nameLegalEntity, shortNameCurrency, sumCurrency, sum, dateCurrency, note
+    ORDERS date(d)
+    FILTERS extractMonth(date(d)) == m, extractYear(date(d)) == y
+    
+    OBJECTS p = Payment
+    PROPERTIES (p) READONLY id, nameLegalEntity, nameCustomer, nameCompany, number, date, monthNumber, nameType, sum, shortNameCurrency, sumCurrency, note
+    ORDERS date(p)
+    FILTERS extractYear(date(p)) == y, extractMonth(date(p)) == m
+    
+    EVENTS ON INIT {
+        SEEK debtsPlan.y = extractYear(currentDate());
+    }
+;
+
+DESIGN debtsPlan {
+    OBJECTS {
+        NEW tab AFTER BOX (m) {
+            tabbed = TRUE;
+            fill = 1;
+            MOVE BOX (d);
+            MOVE BOX (p) { caption = 'Платежи'; }
+        }
+    }
+}
+
+NAVIGATOR {
+    dashboard {
+        NEW debtsPlan;
+    }
+}
+
+recalcCurrencyDebts 'Пересчитать валютные задолженности' () {
+    FOR [GROUP SUM 1 IF inCurrency(contract(Debt d)) AND date(d) >= currentDate() AND sumCurrency(d) BY contract(d)](Contract c) DO NEWSESSION {
+        FOR date(Debt d) >= currentDate() AND sumCurrency(d) AND contract(d) = c DO
+            sum(d) <- round2(sumCurrency(d) / OVERRIDE (rateOn(defaultTypeExchange(), currency(d), dateCurrency(d))), 1);
+        APPLY;
+    } 
+} CONFIRM;

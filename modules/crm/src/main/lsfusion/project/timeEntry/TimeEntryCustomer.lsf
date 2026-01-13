@@ -1,0 +1,81 @@
+MODULE TimeEntryCustomer;
+
+REQUIRE TimeEntry, Customer, AgreementIssue, ContractIssue;
+
+NAMESPACE Project;
+
+timeEntries 'Отметки времени' (Issue i, DATE df, DATE dt) = GROUP SUM 1 IF TimeEntry t AND date(t) >= df AND date(t) <= dt BY issue(t);
+hours 'Трудозатраты' (Issue i, DATE df, DATE dt) = GROUP SUM hours(TimeEntry t) IF date(t) >= df AND date(t) <= dt BY issue(t);
+
+withoutAgreements 'Без соглашений' = DATA LOCAL BOOLEAN ();
+
+filterProject = DATA LOCAL Project(Customer);
+nameFilterProject 'Проект' (Customer c) = name(filterProject(c));
+
+filterAgreement = DATA LOCAL Agreement();
+nameFilterAgreement 'Соглашение' () = description(filterAgreement());
+
+filterContract = DATA LOCAL Contract();
+nameFilterContract 'Соглашение' () = description(filterContract());
+
+hoursFilterProject 'Трудозатраты' (Customer c, DATE  df, DATE dt) = 
+    GROUP SUM hours(TimeEntry t) IF date(t) >= df AND date(t) <= dt 
+        AND (customer(t) == c OR customer(project(t)) == c OR customer(issue(t)) == c)
+        AND (project(t) == filterProject(c) OR project(issue(t)) == filterProject(c) OR NOT filterProject(c)) 
+        AND (agreement(issue(t)) == filterAgreement() OR NOT filterAgreement()) 
+        AND (contract(issue(t)) == filterContract() OR NOT filterContract())
+        AND ((withoutAgreements() AND NOT agreement(issue(t))) OR NOT withoutAgreements() OR filterAgreement() OR filterContract());
+    
+CONSTRAINT filterProject(Customer c) AND NOT customer(filterProject(c)) == c CHECKED BY filterProject[Customer] MESSAGE 'Проект не соответсвует клиенту';
+
+FORM customerReport 'Отчёт для клиента'
+    OBJECTS cd = (c = Customer, df = DATE, dt = DATE) PANEL SUBREPORT 
+    PROPERTIES 'Клиент' = name(c) SELECTOR, 'Дата с' = VALUE (df), 'Дата по' =  VALUE (dt), hoursFilterProject(c, df, dt), withoutAgreements(), 
+                nameFilterProject(c), nameFilterAgreement(), nameFilterContract()
+    
+    OBJECTS i = Issue
+    PROPERTIES (i) READONLY number, dateTimeCreated, estimatedHours, nameAuthor, nameAssignedTo, nameTracker, nameStatus, name
+    PROPERTIES hours(i, df, dt) AFTER estimatedHours(i)
+    ORDERS number(i)
+    FILTERS customer(i) == c, timeEntries(i, df, dt),
+            (withoutAgreements() AND NOT agreement(i)) OR NOT withoutAgreements() OR filterAgreement() OR filterContract(),
+            project(i) == filterProject(c) OR NOT filterProject(c),
+            agreement(i) == filterAgreement() OR NOT filterAgreement(),
+            contract(i) == filterContract() OR NOT filterContract()
+    
+    OBJECTS t = TimeEntry
+    PROPERTIES (t) READONLY nameEmployee, date, hours, nameActivity, commentsString
+    ORDERS date(t)
+    FILTERS issue(t) == i, date(t) >= df AND date(t) <= dt
+    
+    OBJECTS te = TimeEntry
+    PROPERTIES (te) READONLY nameEmployee, date, hours, nameActivity, commentsString
+    ORDERS date(te)
+    FILTERS (customer(te) == c OR customer(project(te)) == c) AND NOT issue(te), date(te) >= df AND date(te) <= dt, 
+            project(te) == filterProject(c) OR NOT filterProject(c), te IS TimeEntry AND NOT filterAgreement() AND NOT filterContract()
+    
+;
+
+printCustomerReport 'Печать' (Customer c, DATE df, DATE dt) {
+    filterAgreement() <- NULL;
+    filterContract() <- NULL;
+    PRINT customerReport OBJECTS c = c, df = df, dt = dt XLS;
+}
+
+printCustomerReportAgreement 'Печать' (Customer c, Agreement a) {
+    filterAgreement() <- a;
+    filterProject(c) <- NULL;
+    filterContract() <- NULL;
+    PRINT customerReport OBJECTS c = c, df = [GROUP LAST date(TimeEntry t) ORDER DESC date(t),t BY agreement(issue(t))](a), 
+                                        dt = [GROUP LAST date(TimeEntry t) ORDER date(t),t BY agreement(issue(t))](a) XLS;
+    filterAgreement() <- NULL;
+}
+
+printCustomerReportContract 'Печать' (Customer c, Contract a) {
+    filterAgreement() <- NULL;
+    filterProject(c) <- NULL;
+    filterContract() <- a;
+    PRINT customerReport OBJECTS c = c, df = [GROUP LAST date(TimeEntry t) ORDER DESC date(t),t BY contract(issue(t))](a), 
+                                        dt = [GROUP LAST date(TimeEntry t) ORDER date(t),t BY contract(issue(t))](a) XLS;
+    filterContract() <- NULL;
+}

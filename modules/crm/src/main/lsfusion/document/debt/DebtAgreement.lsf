@@ -1,0 +1,115 @@
+MODULE DebtAgreement;
+
+REQUIRE Debt, PaymentAgreement;
+
+NAMESPACE Contract;
+
+agreement = DATA Agreement(Debt);
+numberAgreement 'Номер соглашения' (Debt d) = number(agreement(d));
+nameAgreement 'Наименование соглашения' (Debt d) = name(agreement(d));
+
+EXTEND FORM contract PROPERTIES numberAgreement(d);
+
+currency (Agreement a) = currency(contract(a));
+nameCurrnecy 'Валюта' (Agreement d) = name(currency(d));
+shortNameCurrency 'Валюта (сокр.)' (Agreement p) = shortName(currency(p));
+
+inCurrency 'В валюте' (Agreement a) = inCurrency(contract(a));
+sumCurrency 'Стоимость в валюте' = DATA NUMERIC[16,5](Agreement);
+
+sumCurrency(Agreement a) += round2(sumCurrency(a));
+currency(Agreement a) += currency(a);
+inCurrency(Agreement a) += inCurrency(a);
+
+WHEN LOCAL SETCHANGED (sumCurrency(Agreement c)) AND inCurrency(c) AND NOT CHANGED (sum(c)) DO {
+    sum(c) <- round2(sumCurrency(c) / OVERRIDE (rateOn(defaultTypeExchange(), currency(c), date(c))), 1);
+}
+
+addDebt 'Добавить' (Agreement a) {
+    NEW d = Debt {
+        agreement(d) <- a;
+        contract(d) <- contract(a);
+    }
+} IMAGE 'add.png'  CHANGEKEY 'INSERT' HIDE;
+
+createFullDebt 'Сгенерировать задолженность' (Agreement a) {
+    NEW d = Debt {
+    
+        contract(d) <- contract(a);
+        agreement(d) <- a;
+        date(d) <- date(a);
+        
+        IF inCurrency(a) THEN {
+            sumCurrency(d) <- sumCurrency(a);
+        }
+        ELSE {
+            sum(d) <- sum(a);
+        }
+    }
+}
+
+WHEN SETCHANGED (agreement(Debt d)) AND NOT CHANGED (contract(d)) DO {
+    contract(d) <- contract(agreement(d));
+}
+
+CONSTRAINT agreement(Debt d) AND NOT contract(d) == contract(agreement(d)) CHECKED BY agreement[Debt] MESSAGE 'Договор соглашения не совпадает с договором';
+
+paidAgreement 'Оплачено по соглашениям' (Debt d) = PARTITION UNGROUP paidPayment
+                                                      LIMIT STRICT sum(d)
+                                                      ORDER date(d),d 
+                                                      BY agreement(d) MATERIALIZED; 
+
+paidNotDebt (Contract c) = paid(c) (-) [GROUP SUM paidAgreement(Debt d) BY contract(d)](c);
+
+paidContract 'Оплачено по контракту без соглашений' (Debt d) = PARTITION UNGROUP paidNotDebt
+                                                      LIMIT STRICT (sum(d) (-) paidAgreement(d)) IF NOT agreement(d)
+                                                      ORDER date(d),d 
+                                                      BY contract(d) MATERIALIZED; 
+                                                      
+paid 'Оплачено' (Debt d) = paidAgreement(d) (+) paidContract(d);
+
+paidAgreement 'Оплачено' (Debt d, DATE dt) = PARTITION UNGROUP paidPayment
+                                                                   LIMIT STRICT sum(d)
+                                                                   ORDER date(d),d 
+                                                                   BY agreement(d), dt;
+
+paidNotDebt (Contract c, DATE dt) = paid(c, dt) (-) [GROUP SUM paidAgreement(Debt d, dt) BY contract(d)](c);
+
+paidContract 'Оплачено' (Debt d, DATE dt) = PARTITION UNGROUP paidNotDebt
+                                                      LIMIT STRICT (sum(d) (-) paidAgreement(d, dt)) IF NOT agreement(d)
+                                                      ORDER date(d),d 
+                                                      BY contract(d), dt; 
+                                                      
+paid 'Оплачено' (Debt d, DATE dt) = paidAgreement(d, dt) (+) paidContract(d, dt);
+
+EXTEND FORM debts PROPERTIES READONLY paid(o) AFTER sum(o);
+EXTEND FORM dialogDebts PROPERTIES READONLY paid(o) AFTER sum(o);
+EXTEND FORM contract PROPERTIES READONLY paid(d) AFTER sum(d);
+EXTEND FORM debtsPlan PROPERTIES READONLY paid(d) AFTER sum(d);
+
+EXTEND FORM agreement
+    PROPERTIES shortNameCurrency(o) READONLY, sumCurrency(o) SHOWIF inCurrency(o), createFullDebt(o)
+    OBJECTS d = Debt
+    PROPERTIES (d) date, sumCurrency SHOWIF inCurrency(contract(o)), sum, paid, note, problem
+    PROPERTIES addDebt(o) DRAW d TOOLBAR 
+    PROPERTIES (d) DELETE 
+    ORDERS date(d)
+    FILTERS agreement(d) == o
+;
+
+DESIGN agreement {
+    details {
+        NEW debt {
+            caption = 'Задолженность';
+            NEW sum {
+                caption = 'Стоимость';
+                horizontal = TRUE;
+                MOVE PROPERTY (sum(o));
+                MOVE PROPERTY (shortNameCurrency(o));
+                MOVE PROPERTY (sumCurrency(o));
+                MOVE PROPERTY (createFullDebt(o));
+            }
+            MOVE BOX (d);
+        }
+    }
+}

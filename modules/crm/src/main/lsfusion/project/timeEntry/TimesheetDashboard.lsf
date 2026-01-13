@@ -1,0 +1,162 @@
+MODULE TimesheetDashboard;
+
+REQUIRE TimeEntryTotalDashboard, TimeEntryAbsense;
+
+NAMESPACE Project;
+
+absenseHours 'Часы' (Employee e, AbsenceReason r, INTEGER y) = GROUP SUM hours(Absence a) (-) workedHours(a) BY employee(a), reason(a), extractYear(dateFrom(a));
+
+addTimeEntry 'Добавить' (DATE d) {
+    NEWSESSION NEW t = TimeEntry {
+        date(t) <- d;
+        SHOW timeEntry OBJECTS o = t DOCKED;
+    }
+} IMAGE 'add.png' CHANGEKEY 'INSERT' HIDE;
+
+@addRoleApplicationSetting(allowEditOtherTimesheets, 'Разрешить редактировать чужие табели рабочего времени', BOOLEAN);
+
+filterCustomer = DATA LOCAL Customer();
+nameFilterCustomer 'Клиент' () = name(filterCustomer());
+
+hoursFilter 'Трудозатраты' (Employee e, DATE df, DATE dt) = OVERRIDE hours(e, filterCustomer(), df, dt) IF filterCustomer(), hours(e, df, dt) IF NOT filterCustomer();
+
+FORM timesheetDashboard 'Табель рабочего времени'
+
+    OBJECTS my = DATE PANEL
+    PROPERTIES yearMonth = VALUE(my) CUSTOM 'customInputMonth'
+    
+    OBJECTS m = Month PANEL, y = INTEGER PANEL, e = Employee PANEL
+    PROPERTIES name(e) SELECTOR READONLYIF NOT allowEditOtherTimesheets(mainRole(currentUser()))
+    FILTERS y = extractYear(my), m = extractMonth(my),
+            e == currentUser() OR allowEditOtherTimesheets(mainRole(currentUser()))
+    
+    OBJECTS d = DATE 
+    PROPERTIES READONLY VALUE (d), extractDOWName(d), workingHours(d) FOOTER monthHours(y, m), 
+                        totalHours(e, d) BACKGROUND RGB(255,192,192) IF (OVERRIDE totalHours(e, d), 0) < workingHours(d) FOOTER totalHours(e, y, m)
+//    FILTERS workingHours(d) OR totalHours(e, d)
+    FILTERS iterate(d, toDateFormat('01' + lpad(TEXT (number(m)), 2, '0') + y, 'DDMMYYYY'),
+                       lastDayOfMonth(toDateFormat('01' + lpad(TEXT (number(m)), 2, '0') + y, 'DDMMYYYY')))
+                                    
+    
+    OBJECTS t = TimeEntry
+    PROPERTIES (t) READONLY id, hours, commentsString, date, nameActivity, nameProject, nameCustomer, numberIssue, nameIssue, descriptionAbsense
+    PROPERTIES DRAW t TOOLBAR changeAbsense(t), addTimeEntry(d)
+    PROPERTIES (t) SHOWIF NOT disableEditing(t) NEWSESSION EDIT, DELETE 
+    ORDERS date(t)
+    FILTERS employee(t) == e
+    FILTERGROUP tday FILTER 'За день' date(t) == d DEFAULT 
+                     FILTER 'За месяц' extractMonth(date(t)) == m AND extractYear(date(t)) == y
+                     FILTER 'За год' extractYear(date(t)) == y
+    
+    OBJECTS a = Absence
+    PROPERTIES (a) READONLY id, nameEmployee, nameReason, dateFrom, dateTo, hours, workedHours, workingHours, date, note
+    PROPERTIES (a) NEWSESSION NEW, EDIT SHOWIF isEditable(a), DELETE SHOWIF isEditable(a)
+    ORDERS dateFrom(a)
+    FILTERS employee(a) == e
+    FILTERGROUP aday FILTER 'За день' dateFrom(a) == d DEFAULT
+                     FILTER 'За месяц' extractMonth(dateFrom(a)) == m AND extractYear(dateFrom(a)) == y
+                     FILTER 'За год' extractYear(dateFrom(a)) == y
+    
+    OBJECTS r = AbsenceReason
+    PROPERTIES READONLY name(r), absenseHours(e, r, y)
+    FILTERS absenseHours(e, r, y)
+    
+    OBJECTS mm = Month PANEL, yy = INTEGER PANEL
+    PROPERTIES month1 'Месяц' = name(mm) SELECTOR, year1 'Год' = VALUE (yy)
+    
+    OBJECTS dd = DATE 
+    OBJECTS ee = Employee
+    PROPERTIES READONLY name(ee), absenceHours(ee, yy, mm), absenceHours(ee, dd) COLUMNS (dd) HEADER extractDay(dd)
+    PROPERTIES extractDay(dd) SHOWIF NULL 
+    ORDERS extractDay(dd), name(ee)
+    
+    FILTERS iterate(dd, toDateFormat('01' + lpad(TEXT (number(mm)), 2, '0') + yy, 'DDMMYYYY'),
+                                    lastDayOfMonth(toDateFormat('01' + lpad(TEXT (number(mm)), 2, '0') + yy, 'DDMMYYYY')))
+                                    
+    FILTERGROUP hours FILTER 'С отсутствием' absenceHours(ee, yy, mm) DEFAULT 
+    FILTERGROUP active FILTER 'Активные' active(ee) DEFAULT 
+    
+    OBJECTS dates = (df = DATE, dt = DATE) PANEL
+    OBJECTS em = Employee PANEL 
+    PROPERTIES 'Дата с' = VALUE (df), 'Дата по' = VALUE (dt), name(em) DRAW dates READONLY 
+    FILTERS em == currentUser()
+    
+    OBJECTS c = Customer
+    PROPERTIES READONLY name(c), hours(em, c, df, dt)
+    ORDERS hours(em, c, df, dt) DESC 
+    FILTERS hours(em, c, df, dt)
+    
+    EVENTS ON INIT {
+        SEEK timesheetDashboard.m = extractMonth(currentDate());
+        SEEK timesheetDashboard.y = extractYear(currentDate());
+        SEEK timesheetDashboard.e = currentUser();
+        SEEK timesheetDashboard.d = currentDate();
+        SEEK timesheetDashboard.mm = extractMonth(currentDate());
+        SEEK timesheetDashboard.yy = extractYear(currentDate());
+    }
+;
+
+DESIGN timesheetDashboard {
+    OBJECTS {
+        NEW mainTab {
+            tabbed = TRUE;
+            fill = 1;
+            NEW hours {
+                caption = 'Табель рабочего времени';
+                NEW header FIRST {
+                    caption = 'Фильтры';
+                    horizontal = TRUE;
+                    MOVE PROPERTY (yearMonth) { charWidth = 20; alignment = STRETCH; }
+                    MOVE PROPERTY (name(e)) { charWidth = 25; alignment = STRETCH; }
+                }
+                NEW bottom {
+                    horizontal = TRUE;
+                    fill = 1;
+                    NEW left {
+                        MOVE BOX (d) { 
+                            fill = 2;
+                            PROPERTY (workingHours(d)) { charWidth = 10; }
+                            PROPERTY (totalHours(e, d)) { charWidth = 10; }
+                        }
+                        MOVE BOX (r) { 
+                            caption = 'Отсутствие за год'; 
+                            fill = 1;
+                        }
+                        fill = 1;
+                    }
+                    NEW right {
+                        MOVE BOX (t) { fill = 2; }
+                        MOVE BOX (a) { fill = 1; }
+                        fill = 3;
+                    }
+                }
+            }
+            NEW absences {
+                caption = 'Отсутствие сотрудников';
+                fill = 1;
+                NEW header1 FIRST {
+                    caption = 'Фильтры';
+                    horizontal = TRUE;
+                    MOVE PROPERTY (month1) { charWidth = 15; }
+                    MOVE PROPERTY (year1) { charWidth = 5; }
+                }
+                MOVE BOX (mm);
+                MOVE BOX (yy);
+                MOVE BOX (dd);
+                MOVE BOX (ee);
+            }
+            NEW customer {
+                caption = 'Итоги по клиентам';
+                fill = 1;
+                MOVE BOX (dates) { caption = 'Фильтры'; }
+                MOVE BOX (c);
+            }
+        }
+    }
+}
+
+NAVIGATOR {
+    dashboard {
+        NEW timesheetDashboard;
+    }
+}

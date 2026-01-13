@@ -1,0 +1,265 @@
+MODULE PaymentProcessDashboard;
+
+REQUIRE PaymentAct, Expense, Dashboard;
+
+NAMESPACE Dashboard;
+
+isPosted 'Проведен' = DATA BOOLEAN (Payment);
+isPosted 'Проведен' = DATA BOOLEAN (Expense);
+
+post 'Провести все' (DATE df, DATE dt) {
+    NEWSESSION {
+        FOR date(Payment p) >= df AND date(p) <= dt AND NOT isPosted(p) DO {
+            isPosted(p) <- TRUE;
+        }
+        FOR date(Expense p) >= df AND date(p) <= dt AND NOT isPosted(p) DO {
+            isPosted(p) <- TRUE;
+        }
+        APPLY;
+    }
+} CONFIRM;
+
+backgroundAgreement(Payment p) = RGB (222, 255, 222) IF [GROUP SUM 1 BY contract(Agreement a)](contract(p)) AND NOT agreement(p);
+
+filterCustomer = DATA LOCAL Customer();
+nameFilterCustomer 'Клиент' () = name(filterCustomer());
+
+CONSTRAINT filterCustomer() AND NOT sumPayment(filterCustomer()) CHECKED BY filterCustomer[] MESSAGE 'По клиенту нет платежей';
+
+backgroundNumberAccountFrom (Payment p) = IF isCompany(legalEntity(accountFrom(p))) THEN RGB (255, 255, 200);
+backgroundNumberAccountTo (Expense p) = IF isCompany(legalEntity(accountTo(p))) THEN RGB (255, 255, 200);
+
+showCustomerDashboard 'Работа с клиентом' (Payment d) { show(customer(d)); }
+showCustomerDashboard 'Работа с клиентом' (Expense d) { show(customer(d)); }
+
+FORM paymentProcessDasboard 'Обработка платежей'
+    OBJECTS dates = (df = DATE, dt = DATE) PANEL 
+    PROPERTIES dfrom 'Дата с' = VALUE (df), dto 'Дата по' = VALUE (dt), post(df, dt), nameFilterCustomer()
+    
+    OBJECTS p = Payment
+    PROPERTIES DRAW p TOOLBAR showCustomerDashboard(p) SHOWIF customer(p)
+    PROPERTIES (p) isPosted, id, nameLegalEntity, nameCustomer, nameCompany, 
+                   descriptionContract, numberContract, dateContract, nameContract, nameTypeContract READONLY
+    PROPERTIES (p) BACKGROUND backgroundAgreement(p) descriptionAgreement, numberAgreement, nameAgreement
+    PROPERTIES (p) numberAct, number, date, year READONLY, 
+                   monthNumber READONLY, nameType, sum, shortNameCurrency, sumCurrency, numberAccount, numberAccountFrom BACKGROUND backgroundNumberAccountFrom(p), note 
+    PROPERTIES(p) TOOLBAR split
+    ORDERS date(p), nameLegalEntity(p), nameCompany(p), numberContract(p)
+    FILTERS date(p) >= df AND date(p) <= dt 
+    FILTERGROUP postedP FILTER 'Не проведен' NOT isPosted(p) DEFAULT 
+                                       
+    OBJECTS e = Expense
+    PROPERTIES DRAW e TOOLBAR showCustomerDashboard(e) SHOWIF customer(e)
+    PROPERTIES (e) isPosted, nameCompany, nameLegalEntity, nameCustomer, date, datePayment, nameType, sum, shortNameCurrency, sumCurrency, 
+                   numberAccount, numberAccountTo BACKGROUND backgroundNumberAccountTo(e), noteString 
+    ORDERS date(e)
+    FILTERS date(e) >= df AND date(e) <= dt, customer(p) == filterCustomer() OR NOT filterCustomer()
+    FILTERGROUP postedE FILTER 'Не проведен' NOT isPosted(e) DEFAULT 
+;
+
+addPayment 'Добавить' (DATE d) {
+    NEW p = Payment {
+        date(p) <- d;
+        SEEK paymentProcessDasboard.p = p;
+    }
+} IMAGE 'add.png'  CHANGEKEY 'INSERT' HIDE;
+
+addExpense 'Добавить' (DATE d) {
+    NEW e = Expense {
+        date(e) <- d;
+        SEEK paymentProcessDasboard.e = e;
+    }
+} IMAGE 'add.png'  CHANGEKEY 'INSERT' HIDE;
+
+EXTEND FORM paymentProcessDasboard
+    PROPERTIES DRAW p TOOLBAR addPayment(dt), DELETE(p) 
+    PROPERTIES DRAW e TOOLBAR addExpense(dt), DELETE(e)
+;
+
+NAVIGATOR {
+    dashboard {
+        NEW paymentProcessDasboard;
+    }
+}
+
+importPaymentsDbf 'Импорт платежей (dbf)' (DATE df, DATE dt) {
+    
+    LOCAL idLegalEntity = STRING[15](INTEGER);
+    LOCAL date = DATE (INTEGER);
+    LOCAL text = TEXT (INTEGER);
+    LOCAL sum = NUMERIC[16,5](INTEGER);
+    LOCAL type = STRING[15](INTEGER);
+    LOCAL idCompany = STRING[15](INTEGER);
+    LOCAL message = STRING[2000] ();
+    LOCAL count = INTEGER ();
+    
+    message() <- '';
+    count() <- 0;
+    
+    LOCAL payment = Payment(INTEGER);
+    LOCAL expense = Expense(INTEGER);
+    
+    
+    INPUT f = FILE DO {
+        IMPORT DBF CHARSET 'cp866' FROM f TO idLegalEntity, date, text, sum, type, idCompany;
+        
+        payment(INTEGER i) <- GROUP MAX Payment p IF date(p) == date(i) AND round2(sum(p)) == round2(sum(i)/extractDay(date(i))) AND legalEntity(p) == legalEntityEx(idLegalEntity(i));
+        expense(INTEGER i) <- GROUP MAX Expense p IF date(p) == date(i) AND round2(sum(p)) == round2(-sum(i)/extractDay(date(i))) AND legalEntity(p) == legalEntityEx(idLegalEntity(i));
+
+        FOR imported(INTEGER i) AND NOT legalEntityEx(idLegalEntity(i)) AND sum(i) > 0 AND date(i) >= df AND date(i) <= dt DO {
+        
+            message() <- CONCAT ' ', message() + '\r\nстрока:', (i + 1), 'Код организации:', idLegalEntity(i);
+            count() <- count() + 1;
+        }
+        
+        IF count() > 0 THEN {
+            MESSAGE CONCAT ' ', 'Платежи, для которых не найдена организация: ', count(), message();
+        }
+        
+        FOR [GROUP SUM 1 IF sum(INTEGER i) < 0 AND expense(i) BY type(i)](STRING[15] type) AND type != '' AND NOT (GROUP MAX ExpenseType t IF name(t) == type) DO NEW t = ExpenseType {
+            name(t) <- type;
+        }
+                
+        FOR [GROUP SUM 1 IF sum(INTEGER i) > 0 AND payment(i) BY type(i)](STRING[15] type) AND type != '' AND NOT (GROUP MAX PaymentType t IF name(t) == type) DO NEW t = PaymentType {
+            name(t) <- type;
+        }
+        
+        FOR Payment p = payment(INTEGER i) AND date(i) >= df AND date(i) <= dt DO {
+            company(p) <- OVERRIDE legalEntity(idCompany(i)), defaultCompany();
+            note(p) <- text(i);
+            type(p) <- GROUP MAX PaymentType t IF name(t) == type(i);
+        }
+        
+        FOR Expense p = expense(INTEGER i) AND date(i) >= df AND date(i) <= dt DO {
+            company(p) <- OVERRIDE legalEntity(idCompany(i)), defaultCompany();
+            note(p) <- text(i);
+            type(p) <- GROUP MAX ExpenseType t IF name(t) == type(i);
+        }
+        
+        FOR imported(INTEGER i) AND sum(i) < 0 AND NOT expense(i) AND date(i) >= df AND date(i) <= dt DO NEW p = Expense {
+            date(p) <- date(i);
+            legalEntity(p) <- legalEntityEx(idLegalEntity(i));
+            company(p) <- OVERRIDE legalEntity(idCompany(i)), defaultCompany();
+            currency(p) <- defaultCurrency();
+            note(p) <- text(i);
+            sum(p) <- round2(-sum(i)/extractDay(date(i)));
+            type(p) <- GROUP MAX ExpenseType t IF name(t) == type(i);
+        }
+        
+        FOR imported(INTEGER i) AND sum(i) > 0 AND NOT payment(i) AND date(i) >= df AND date(i) <= dt DO NEW p = Payment {
+            date(p) <- date(i);
+            legalEntity(p) <- legalEntityEx(idLegalEntity(i));
+            company(p) <- OVERRIDE legalEntity(idCompany(i)), defaultCompany();
+            contract(p) <- GROUP MAX Contract c IF legalEntity(c) == legalEntity(p) AND company(c) == company(p) AND date(c) >= date(p) AND NOT dateClosing(c) <= date(p)
+                                 AND [GROUP SUM 1 IF NOT dateClosing(Contract cc) <= date(p) AND date(cc) >= date(p) BY legalEntity(cc), company(cc)](legalEntity(c), company(c)) == 1;
+            currency(p) <- defaultCurrency();
+            note(p) <- text(i);
+            sum(p) <- round2(sum(i)/extractDay(date(i)));
+            type(p) <- GROUP MAX PaymentType t IF name(t) == type(i);
+        }
+    }
+}
+
+receiptImport 'Приход из файла' = DATA LOCAL NUMERIC[16,5](DATE);
+shipmentImport 'Расход из файла' = DATA LOCAL NUMERIC[16,5](DATE);
+
+receipt 'Приход' (DATE d) = GROUP SUM sum(Payment p) BY date(p);
+shipment 'Расход' (DATE d) = GROUP SUM sum(Expense e) BY date(e);
+
+    
+idLegalEntity = DATA LOCAL STRING[15](INTEGER);
+date 'Дата' = DATA LOCAL DATE (INTEGER);
+text 'Текст' = DATA LOCAL ISTRING[1000] (INTEGER) CHARWIDTH 20;
+sum 'Сумма' = DATA LOCAL NUMERIC[16,5](INTEGER);
+type 'Тип' = DATA LOCAL STRING[15](INTEGER);
+idCompany = DATA LOCAL STRING[15](INTEGER);
+legalEntity = DATA LOCAL LegalEntity(INTEGER);
+company = DATA LOCAL LegalEntity(INTEGER);
+    
+FORM reviseSum 'Расхождение сумм платежей'
+    OBJECTS df = DATE PANEL, dt = DATE PANEL
+    OBJECTS d = DATE 
+    PROPERTIES (d) READONLY VALUE, receipt, receiptImport, shipment, shipmentImport
+    FILTERS ((receipt(d) OR receiptImport(d)) AND NOT receipt(d) == receiptImport(d)) OR 
+            ((shipment(d) OR shipmentImport(d)) AND NOT shipment(d) == shipmentImport(d)),
+            iterate(d, df, dt)
+    
+    OBJECTS p = Payment
+    PROPERTIES (p) READONLY isPosted, id, nameLegalEntity, nameCustomer, nameCompany, numberContract, nameTypeContract, 
+                   numberAgreement, numberAct, number, date, nameType, sum, shortNameCurrency, sumCurrency, note 
+    FILTERS date(p) == d, account(p) == account(legalEntity(p))
+          
+    OBJECTS i = INTEGER
+    PROPERTIES (i) READONLY date, text, sum, type
+    PROPERTIES 'Организация' = name(legalEntity(i)), 'Компания' = name(company(i))
+    FILTERS imported(i), date(i) == d, sum(i) > 0
+    
+    OBJECTS e = Expense
+    PROPERTIES (e) READONLY nameCompany, nameLegalEntity, nameCustomer, date, datePayment, nameType, sum, shortNameCurrency, sumCurrency, noteString
+    FILTERS date(e) == d, account(e) == account(legalEntity(e))
+          
+    OBJECTS ie = INTEGER
+    PROPERTIES (ie) READONLY date, text, sum, type
+    PROPERTIES 'Организация' = name(legalEntity(ie)), 'Компания' = name(company(ie))
+    FILTERS imported(ie), date(ie) == d, sum(ie) < 0
+;
+
+reviseSum 'Сверка' (DATE df, DATE dt) {
+    
+    INPUT f = FILE DO {
+        IMPORT DBF CHARSET 'cp866' FROM f TO idLegalEntity, date, text, sum, type, idCompany;
+        
+        receiptImport(DATE d) <- NULL;
+        shipmentImport(DATE d) <- NULL;
+        
+        legalEntity(INTEGER i) <- legalEntityEx(idLegalEntity(i));
+        company(INTEGER i) <- legalEntity(idCompany(i));
+        
+        sum(INTEGER i) <- sum(i)/extractDay(date(i));
+        
+        receiptImport(DATE d) <- GROUP SUM sum(INTEGER i) IF sum(i) > 0 AND d == date(i);
+        shipmentImport(DATE d) <- GROUP SUM -sum(INTEGER i) IF sum(i) < 0 AND d = date(i);
+
+        SHOW reviseSum OBJECTS df = df, dt = dt DOCKED NOWAIT;
+    }
+}
+
+DESIGN reviseSum {
+    OBJECTS {
+        NEW tab AFTER BOX (d) {
+            tabbed = TRUE;
+            fill = 1;
+            NEW payment {
+                caption = 'Приходы';
+                horizontal = TRUE;
+                fill = 1;
+                MOVE BOX (p);
+                MOVE BOX (i) { caption = 'Из файла'; }
+            }
+            NEW expense {
+                caption = 'Расходы';
+                horizontal = TRUE;
+                fill = 1;
+                MOVE BOX (e);
+                MOVE BOX (ie) { caption = 'Из файла'; }
+            }
+        }
+    }
+}
+
+EXTEND FORM paymentProcessDasboard PROPERTIES (df, dt) DRAW dates importPaymentsDbf, reviseSum;
+
+DESIGN paymentProcessDasboard {
+    OBJECTS {
+        NEW top FIRST {
+            horizontal = TRUE;
+            caption = 'Фильтры';
+            MOVE PROPERTY (nameFilterCustomer());
+            MOVE PROPERTY (dfrom);
+            MOVE PROPERTY (dto);
+            MOVE PROPERTY (post(df, dt));
+            MOVE PROPERTY (importPaymentsDbf(df, dt));
+            MOVE PROPERTY (reviseSum(df, dt));
+        }
+    }
+}

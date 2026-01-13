@@ -1,0 +1,53 @@
+MODULE Project;
+
+REQUIRE Customer;
+
+NAMESPACE Project;
+
+CLASS Project 'Проект';
+TABLE project (Project);
+
+id 'Код' = DATA STRING[15] (Project) INDEXED CHARWIDTH 5 IN id;
+
+name 'Наименование' = DATA ISTRING[100] (Project) CHARWIDTH 15 IN id;
+identifier 'Идентификатор' = DATA ISTRING[100] (Project) CHARWIDTH 15 IN id;
+
+customer = DATA Customer(Project);
+nameCustomer 'Клиент' (Project p) = name(customer(p));
+
+inactive 'Неактивный' = DATA BOOLEAN (Project);
+active 'Активный' (Project p) = NOT inactive(p);
+
+merge (Customer from, Customer to) + { customer(Project p) <- to WHERE customer(p) = from; }
+
+FORM project 'Проект'
+    OBJECTS o = Project PANEL
+    PROPERTIES(o) id, name, identifier, nameCustomer, inactive
+    
+    EDIT Project OBJECT o
+;
+
+FORM projects 'Проекты'
+    OBJECTS o = Project
+    PROPERTIES(o) READONLYIF isReadonly() id, name, identifier, nameCustomer, inactive
+    PROPERTIES(o) NEWSESSION NEW, EDIT, DELETE
+    ORDERS name(o)
+    FILTERGROUP active FILTER 'Активные' NOT inactive(o) DEFAULT 
+;
+
+@extendFormEditable(projects);
+
+FORM dialogProjects 'Проекты'
+    OBJECTS o = Project
+    PROPERTIES(o) READONLY id, name, identifier, nameCustomer, inactive
+    ORDERS name(o)
+    FILTERGROUP active FILTER 'Активные' NOT inactive(o) DEFAULT 
+    
+    LIST Project OBJECT o
+;
+
+NAVIGATOR {
+    NEW FOLDER project 'Проекты' BEFORE masterData WINDOW toolbar IMAGE 'project.png' {
+        NEW projects;
+    }
+}

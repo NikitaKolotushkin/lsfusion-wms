@@ -1,0 +1,46 @@
+MODULE PaymentAgreement;
+
+REQUIRE PaymentContract, Agreement;
+
+NAMESPACE Payment;
+
+agreement = DATA Agreement(Payment);
+idAgreement 'Код соглашения' (Payment p) = id(agreement(p));
+numberAgreement 'Номер соглашения' (Payment p) = number(agreement(p));
+nameAgreement 'Наименование соглашения' (Payment p) = name(agreement(p));
+
+descriptionAgreement 'Соглашение' (Payment p) = description(agreement(p));
+
+paidPayment 'Оплачено' (Agreement a) = GROUP SUM sumContract(Payment p) BY agreement(p) MATERIALIZED;
+paidPayment 'Оплачено' (Agreement a, DATE d) = GROUP SUM sumContract(Payment p) IF date(p) <= d BY agreement(p);
+
+paidNotPaymentAgreement (Contract c) = paid(c) (-) [GROUP SUM paidPayment(Agreement a) BY contract(a)](c);
+
+paidContract 'Оплачено' (Agreement a) = PARTITION UNGROUP paidNotPaymentAgreement
+                                                      LIMIT STRICT sum(a) (-) paidPayment(a)
+                                                      ORDER date(a),a 
+                                                      BY contract(a) MATERIALIZED; 
+                                                      
+paid 'Оплачено' (Agreement a) = paidContract(a) (+) paidPayment(a);
+
+paid(Agreement c) += NUMERIC[16,5](paid(c));             
+
+CONSTRAINT contract(agreement(Payment p)) != contract(p) CHECKED BY agreement[Payment] MESSAGE 'Договор соглашения должен совпадать с договором платежа';
+
+EXTEND FORM dialogAgreements PROPERTIES paid(o) AFTER sum(o);
+EXTEND FORM payment PROPERTIES (o) numberAgreement;
+
+DESIGN payment {
+    docs {
+        MOVE PROPERTY (numberAgreement(o));
+    }
+}
+
+EXTEND FORM payments 
+    PROPERTIES (o) READONLY numberAgreement
+;
+EXTEND FORM dialogPayments 
+    PROPERTIES (o) READONLY numberAgreement
+;
+
+EXTEND FORM contract PROPERTIES READONLY paid(ag), numberAgreement(p);

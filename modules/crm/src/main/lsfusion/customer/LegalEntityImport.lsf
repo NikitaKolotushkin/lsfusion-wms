@@ -1,0 +1,168 @@
+MODULE LegalEntityImport;
+
+REQUIRE LegalEntity, Utils;
+
+NAMESPACE LegalEntity;
+
+overLegalEntityImport ABSTRACT LIST (FILE);
+
+importLegalEntities 'Импорт организаций' (FILE f) {
+    LOCAL idCustomer = STRING[15](INTEGER);
+    LOCAL nameCustomer = STRING[250](INTEGER);
+    LOCAL customerGroup = STRING[100](INTEGER);
+    LOCAL status = STRING[100](INTEGER);
+    LOCAL emailCustomer = STRING[200](INTEGER);
+    LOCAL phoneCustomer = STRING[50](INTEGER);
+    LOCAL siteCustomer = STRING[100](INTEGER);
+    LOCAL noteCustomer = STRING[100](INTEGER);
+    LOCAL dateCustomer = DATE(INTEGER);
+    LOCAL idLegalEntity = STRING[15](INTEGER);
+    LOCAL extIdLegalEntity = STRING[15](INTEGER);
+    LOCAL nameLegalEntity = STRING[250](INTEGER);
+    LOCAL postcodeL = STRING[10](INTEGER);
+    LOCAL regionL = STRING[20](INTEGER);
+    LOCAL districtL = STRING[20](INTEGER);
+    LOCAL localityL = STRING[50](INTEGER);
+    LOCAL streetL = STRING[50](INTEGER);
+    LOCAL houseL = STRING[20](INTEGER);
+    LOCAL officeL = STRING[20](INTEGER);
+    LOCAL postcodeP = STRING[10](INTEGER);
+    LOCAL regionP = STRING[20](INTEGER);
+    LOCAL districtP = STRING[20](INTEGER);
+    LOCAL localityP = STRING[50](INTEGER);
+    LOCAL streetP = STRING[50](INTEGER);
+    LOCAL houseP = STRING[20](INTEGER);
+    LOCAL officeP = STRING[20](INTEGER);
+    LOCAL idBank = STRING[15](INTEGER);
+    LOCAL numberBank = STRING[10](INTEGER);
+    LOCAL nameBank = STRING[100](INTEGER);
+    LOCAL addressBank = STRING[250](INTEGER);
+    LOCAL mfoBank = STRING[11](INTEGER);
+    LOCAL account = STRING[50](INTEGER);
+    LOCAL info = TEXT(INTEGER);
+    
+    IMPORT XLS NOHEADER FROM f TO idCustomer = B, nameCustomer, customerGroup, status, emailCustomer, phoneCustomer, siteCustomer, noteCustomer, dateCustomer, 
+                         info, idLegalEntity, extIdLegalEntity, nameLegalEntity, postcodeL, regionL, districtL, localityL, streetL, houseL, officeL, 
+                         postcodeP, regionP, districtP, localityP, streetP, houseP, officeP, account, idBank, numberBank, nameBank, addressBank, mfoBank;
+                         
+    FOR [GROUP SUM 1 IF INTEGER i > 1 BY trim(idCustomer(i))](STRING[15] id) AND id AND NOT customer(id) DO NEW c = Customer {
+        id(c) <- id;
+    }
+    FOR INTEGER ii = [GROUP MIN INTEGER i IF i > 1 BY trim(idLegalEntity(i))](STRING[15] id) AND id AND NOT legalEntity(id) DO NEW l = LegalEntity {
+        id(l) <- id;
+        customer(l) <- customer(trim(idCustomer(ii)));
+    }
+    FOR [GROUP SUM 1 IF INTEGER i > 1 BY trim(idBank(i))](STRING[15] id) AND id AND NOT bank(id) DO NEW b = Bank {
+        id(b) <- id;
+    }
+    FOR INTEGER i = [GROUP MIN INTEGER ii IF ii > 1 BY trim(status(ii))](STRING[15] name) AND name AND NOT [GROUP SUM 1 BY name(StatusCustomer c)](name) DO NEW s = StatusCustomer {
+        name(s) <- name;
+    }
+    FOR INTEGER i = [GROUP MIN INTEGER ii IF ii > 1 BY trim(customerGroup(ii))](STRING[15] name) AND name AND NOT [GROUP SUM 1 BY name(CustomerGroup c)](name) DO NEW g = CustomerGroup {
+        name(g) <- name;
+    }
+    
+    FOR Customer c = customer(idCustomer(INTEGER i)) AND trim(idCustomer(i)) != '' DO {
+        name(c) <- trim(nameCustomer(i));
+        status(c) <- GROUP MAX StatusCustomer s IF name(s) == trim(status(i));
+        group(c) <- GROUP MAX CustomerGroup s IF name(s) == trim(customerGroup(i));
+        email(c) <- trim(emailCustomer(i));
+        phone(c) <- trim(phoneCustomer(i));
+        site(c) <- trim(siteCustomer(i));
+        note(c) <- trim(noteCustomer(i));
+        dateFrom(c) <- dateCustomer(i);
+        info(c) <- trim(info(i));
+        
+        FOR customer(Address a) == c DO {
+            DELETE a;
+        }
+    }
+    
+    DELETE Address a WHERE GROUP SUM 1 IF LegalEntity l = legalEntity(idLegalEntity(INTEGER i)) AND trim(idLegalEntity(i)) != '' AND legalEntity(a) = l;
+    FOR LegalEntity l = legalEntity(idLegalEntity(INTEGER i)) AND trim(idLegalEntity(i)) != '' DO {
+        extId(l) <- trim(extIdLegalEntity(i)) WHERE (trim(extIdLegalEntity(i)) != '' AND NOT legalEntityEx(trim(extIdLegalEntity(i))));
+        name(l) <- trim(nameLegalEntity(i));
+    }
+        
+    FOR LegalEntity l = legalEntity(idLegalEntity(INTEGER i)) AND trim(idLegalEntity(i)) != '' AND NOT account(trim(account(i)), l) AND trim(account(i)) != '' DO NEW a = Account {
+        number(a) <- trim(account(i));
+        legalEntity(a) <- l;
+        bank(a) <- bank(trim(idBank(i)));
+    }
+
+    FOR LegalEntity l = legalEntity(idLegalEntity(INTEGER i)) AND trim(idLegalEntity(i)) != '' AND 
+        Account a == account(account(i), l) AND trim(account(i)) != '' DO {
+        userAccount(l) <- a;
+    }
+    
+    FOR legalEntity(idLegalEntity(INTEGER i)) OR customer(idCustomer(i)) DO NEW a = Address {
+        in(a, AddressType t) <- TRUE IF t == AddressType.physical;
+        postcode(a) <- trim(postcodeP(i)) IF trim(postcodeP(i)) != '';
+        region(a) <- trim(regionP(i)) IF trim(regionP(i)) != '';
+        district(a) <- trim(districtP(i)) IF trim(districtP(i)) != '';
+        locality(a) <- trim(localityP(i)) IF trim(localityP(i)) != '';
+        street(a) <- trim(streetP(i)) IF trim(streetP(i)) != '';
+        houseNumber(a) <- trim(houseP(i)) IF trim(houseP(i)) != '';
+        officeNumber(a) <- trim(officeP(i)) IF trim(officeP(i)) != '';
+        customer(a) <- OVERRIDE customer(legalEntity(trim(idLegalEntity(i)))), customer(trim(idCustomer(i)));
+        legalEntity(a) <- legalEntity(trim(idLegalEntity(i)));
+    }
+
+    FOR legalEntity(idLegalEntity(INTEGER i)) OR customer(idCustomer(i)) DO NEW a = Address {
+        in(a, AddressType t) <- TRUE IF t == AddressType.legal;
+        postcode(a) <- trim(postcodeL(i)) IF trim(postcodeL(i)) != '';
+        region(a) <- trim(regionL(i)) IF trim(regionL(i)) != '';
+        district(a) <- trim(districtL(i)) IF trim(districtL(i)) != '';
+        locality(a) <- trim(localityL(i)) IF trim(localityL(i)) != '';
+        street(a) <- trim(streetL(i)) IF trim(streetL(i)) != '';
+        houseNumber(a) <- trim(houseL(i)) IF trim(houseL(i)) != '';
+        officeNumber(a) <- trim(officeL(i)) IF trim(officeL(i)) != '';
+        customer(a) <- OVERRIDE customer(legalEntity(trim(idLegalEntity(i)))), customer(trim(idCustomer(i)));
+        legalEntity(a) <- legalEntity(trim(idLegalEntity(i)));
+    }
+    
+    FOR Bank b = bank(idBank(INTEGER i)) AND trim(idBank(i)) != '' DO {
+        number(b) <- trim(numberBank(i));
+        name(b) <- trim(nameBank(i));
+        address(b) <- trim(addressBank(i));
+        mfo(b) <- trim(mfoBank(i));
+    }
+    overLegalEntityImport(f);
+}
+
+importLegalEntities 'Импорт организаций' () {
+    NEWSESSION INPUT f = FILE DO {
+        importLegalEntities(f);
+        APPLY;
+    }
+}
+
+FORM exportLegalEntities 'Экспорт организаций'
+    
+    OBJECTS l = LegalEntity
+    PROPERTIES idCustomer(l), nameCustomer(l), 'Группа клиента' = nameGroup(customer(l)), 'Статус' = nameStatus(customer(l)), 
+               'E-mail' = email(customer(l)), 'Телефон' = phone(customer(l)), 'Сайт' = site(customer(l)), 'Примечание' = note(customer(l)), 
+               'Дата начала' = dateFrom(customer(l)), 'Информация клиента' = info(customer(l)), 
+               'Код организации' = id(l), extId(l), 'Организация' = name(l), 
+               'Индекс (юридический)' = postcode(legalAddress(l)), 'Регион (юридический)' = region(legalAddress(l)), 
+               'Район (юридический)' = district(legalAddress(l)), 'Регион (юридический)' = locality(legalAddress(l)), 
+               'Улица (юридический)' = street(legalAddress(l)), 'Дом (юридический)' = houseNumber(legalAddress(l)), 
+               'Офис (юридический)' = officeNumber(legalAddress(l)),
+               'Индекс (физический)' = postcode(physicalAddress(l)), 'Регион (физический)' = region(physicalAddress(l)), 
+               'Район (физический)' = district(physicalAddress(l)), 'Регион (физический)' = locality(physicalAddress(l)), 
+               'Улица (физический)' = street(physicalAddress(l)), 'Дом (физический)' = houseNumber(physicalAddress(l)), 
+               'Офис (физический)' = officeNumber(physicalAddress(l)), numberAccount(l), 'ID банка' = id(bank(account(l))), 
+               numberBank(l), nameBank(l), addressBank(l), mfoBank(l)
+    ORDERS nameCustomer(l), name(l)   
+;
+
+exportLegalEntities 'Экспорт организаций' () {
+    
+    LOCAL file = FILE();
+    
+    PRINT exportLegalEntities XLS TO file;
+    WRITE CLIENT DIALOG file() TO 'Организации';
+    open(file(), 'Организации');
+}
+
+EXTEND FORM migrationData PROPERTIES() exportLegalEntities, importLegalEntities;

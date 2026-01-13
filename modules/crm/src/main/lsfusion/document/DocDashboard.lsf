@@ -1,0 +1,161 @@
+MODULE DocDashboard;
+
+REQUIRE DocFile, Time, Dashboard, Contract, DocIssue, DocEvent, DocContact;
+
+NAMESPACE Doc;
+
+in 'Отм.' = DATA LOCAL NESTED BOOLEAN (Document);
+
+notSign (Document d) = NOT dateSigningCompany(d) AND NOT dateSending(d) AND NOT dateReceiving(d);
+notSend (Document d) = dateSigningCompany(d) AND NOT dateSending(d) AND NOT dateReceiving(d);
+notReceive (Document d) = dateSending(d) AND NOT dateReceiving(d);
+
+sign 'Подписать' (Document d) {
+    NEWSESSION {
+        IF NOT (GROUP SUM 1 IF in(Document t)) THEN in(d) <- TRUE;
+        FOR in(Document dd) AND notSign(dd) DO {
+            dateSigningCompany(dd) <- currentDate();
+        }
+        in(Document dd) <- NULL;
+        APPLY;
+    }
+} TOOLBAR CONFIRM;
+
+send 'Отправить' (Document d) {
+    NEWSESSION {
+        IF NOT (GROUP SUM 1 IF in(Document t)) THEN in(d) <- TRUE;
+        FOR in(Document dd) AND notSend(dd) DO {
+            dateSending(dd) <- currentDate();
+        }
+        in(Document dd) <- NULL;
+        APPLY;
+    }
+} TOOLBAR CONFIRM;
+
+receive 'Получить' (Document d) {
+    NEWSESSION {
+        IF NOT (GROUP SUM 1 IF in(Document t)) THEN in(d) <- TRUE;
+        FOR in(Document dd) AND notReceive(dd) DO {
+            dateReceiving(dd) <- currentDate();
+        }
+        in(Document dd) <- NULL;
+        APPLY;
+    }
+} TOOLBAR CONFIRM;
+
+open 'Открыть' (Document d) {
+    safeOpen(file(d), fileName(d));
+} TOOLBAR;
+
+close 'Закрыть' (Document d) {
+    NEWSESSION {
+        IF NOT (GROUP SUM 1 IF in(Document t)) THEN in(d) <- TRUE;
+        FOR in(Document dd) AND NOT dateClosing(dd) DO {
+            dateClosing(dd) <- currentDate();
+        }
+        in(Document dd) <- NULL;
+        APPLY;
+    }
+} TOOLBAR CONFIRM;
+
+edit 'Редактировать' (Document d) {
+    NEWSESSION SHOW EDIT Document = d DOCKED;
+} TOOLBAR IMAGE 'edit.png';
+
+filterDocType = DATA LOCAL DocType();
+nameFilterDocClass 'Вид документа' () = name(filterDocType());
+
+filterLegalEntity = DATA LOCAL LegalEntity();
+nameFilterLegalEntity 'Компания' () = name(filterLegalEntity());
+nameCustomerFilterLegalEntity 'Клиент' () = name(customer(filterLegalEntity()));
+
+CONSTRAINT filterLegalEntity() AND NOT isCompany(filterLegalEntity()) CHECKED BY filterLegalEntity[] MESSAGE 'Компания не является компанией';  
+
+FORM documentReport 'Реестр отправленной корреспонденции'
+    
+    OBJECTS dates = (df = DATE, dt = DATE) PANEL
+    PROPERTIES 'Дата с' = VALUE (df), 'Дата по' = VALUE (dt)
+    PROPERTIES () nameCustomerFilterLegalEntity
+    
+    OBJECTS d = Document
+    PROPERTIES (d) fullNameLegalEntity, nameType, description, note
+    FILTERS company(d) == filterLegalEntity(), dateSending(d) >= df AND dateSending(d) <= dt, mail(sendingWay(d))
+;
+
+printDocumentReport 'Реестр отправленной корреспонденции' (DATE df, DATE dt) {
+    PRINT documentReport OBJECTS df = df, dt = dt XLS;
+} IMAGE 'print.png';
+
+addIssue 'Добавить' (Document d) {
+    NEWSESSION NEW i = Issue {
+        document(i) <- d;
+        SHOW issue OBJECTS o = i DOCKED;
+    }
+} IMAGE 'add.png' CHANGEKEY 'INSERT' HIDE;
+
+showCustomerDashboard 'Работа с клиентом' (Document d) { show(customer(d)); }
+
+FORM docDashboard 'Обработка документов'
+    
+    OBJECTS dates = (df = DATE, dt = DATE) PANEL
+    PROPERTIES dfrom 'Дата с' = VALUE (df), dto 'Дата по' = VALUE (dt), printDocumentReport(df, dt)
+    PROPERTIES () nameFilterDocClass, nameFilterLegalEntity
+    
+    OBJECTS d = Document
+    PROPERTIES (d) TOOLBAR showCustomerDashboard, sendToContacts SHOWIF customer(d)
+    PROPERTIES (d) in, sign SHOWIF notSign(d), send SHOWIF notSend(d), receive SHOWIF notReceive(d), open SHOWIF TRUE IF file(d), edit, close SHOWIF NOT dateClosing(d)
+    PROPERTIES (d) READONLY nameDocType, id, number, date, name, nameCustomer, nameType, numberContract, dateContract, nameLegalEntity, 
+                            nameCompany, shortNameCurrency, 
+                            sumCurrency BACKGROUND backgroundCurrency(d), paidCurrency BACKGROUND backgroundCurrency(d),
+                            sum, paid, dateLastPaid, balance
+    PROPERTIES (d) READONLYIF isReadonly() dateSigningCompany, dateSending, nameSendingWay, dateSigningCustomer, dateReceiving, dateClosing
+    ORDERS date(d)
+    FILTERS docType(d) = filterDocType() OR NOT filterDocType(), company(d) == filterLegalEntity() OR NOT filterLegalEntity()
+    FILTERGROUP open FILTER 'Открыт' NOT dateClosing(d) DEFAULT 
+    
+    FILTERGROUP d FILTER 'Требуется подписание' notSign(d)
+                  FILTER 'Требуется отправка' notSend(d)
+                  FILTER 'Ожидается получение' notReceive(d)
+                  
+    OBJECTS e = Event
+    PROPERTIES (e) READONLY id, name, nameType, nameCustomer, nameLegalEntity, nameEmployee, nameContact, date, time, dateNext, descriptionString, additionString
+    PROPERTIES  addEventDoc(d) DRAW e TOOLBAR 
+    PROPERTIES (e) NEWSESSION EDIT, DELETE 
+    FILTERGROUP event FILTER 'По организации' legalEntity(e) == legalEntity(d)
+                      FILTER 'По клиенту' customer(e) == customer(d)
+                      
+    OBJECTS i = Issue
+    PROPERTIES (i) READONLY number, name, descriptionString, dateTo, dateTimeCreated, dateTimeUpdated, dateFrom, doneRatio, 
+                            estimatedHours, nameProject, nameCustomer, nameAuthor, nameAssignedTo, nameTracker, nameStatus
+    PROPERTIES DRAW i TOOLBAR addIssue(d)
+    PROPERTIES (i) NEWSESSION EDIT, DELETE 
+    FILTERS document(i) == d
+;
+
+@extendFormEditable(docDashboard);
+
+DESIGN docDashboard {
+    OBJECTS {
+        NEW filter FIRST {
+            caption = 'Фильтры';
+            horizontal = TRUE;
+            MOVE PROPERTY (nameFilterDocClass());
+            MOVE PROPERTY (nameFilterLegalEntity());
+            MOVE PROPERTY (dfrom);
+            MOVE PROPERTY (dto);
+            MOVE PROPERTY (printDocumentReport(df, dt));
+        }
+        NEW tab AFTER BOX (d) {
+            tabbed = TRUE;
+            fill = 1;
+            MOVE BOX (e) { caption = 'События'; }
+            MOVE BOX (i) { caption = 'Задачи'; }
+        }
+    }
+}
+
+NAVIGATOR {
+    dashboard {
+        NEW docDashboard;
+    }
+}

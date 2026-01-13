@@ -1,0 +1,83 @@
+MODULE AccountLedger;
+
+REQUIRE LegalEntity;
+
+NAMESPACE Account;
+
+CLASS ABSTRACT AccountLedger 'Движение по счёту';
+TABLE accountLedger(AccountLedger);
+
+account = ABSTRACT Account(AccountLedger) MATERIALIZED INDEXED;
+date 'Дата' = ABSTRACT DATE (AccountLedger) MATERIALIZED;
+
+legalEntity = ABSTRACT LegalEntity(AccountLedger) MATERIALIZED INDEXED;
+idLegalEntity 'Код организации' (AccountLedger l) = id(legalEntity(l));
+nameLegalEntity 'Организация' (AccountLedger l) = name(legalEntity(l));
+
+note 'Примечание' = ABSTRACT ISTRING[250](AccountLedger) MATERIALIZED;
+sum 'Сумма' = ABSTRACT NUMERIC[16,5](AccountLedger) MATERIALIZED;
+
+balance 'Остаток' (Account a) = GROUP SUM sum(AccountLedger l) BY account(l) MATERIALIZED;
+balanceCurrency 'Остаток в валюте' (Account a) = round2(balance(a) * OVERRIDE (rateOn(defaultTypeExchange(), currency(a), currentDate())), 1);
+
+balance 'Остаток' (Account a, DATE d) = balance(a) (-) [GROUP SUM sum(AccountLedger l) IF iterate(date(l), sum(d, 1), currentDate()) BY account(l)](a);
+balanceAccounts 'Сумма остатков' (DATE d) = GROUP SUM balance(Account a, d);
+
+balanceCurrency 'Остаток в валюте' (Account a, DATE d) = balance(a, d) * OVERRIDE rateOn(defaultTypeExchange(), currency(a), d), 1;
+balanceAccountsCurrency 'Сумма остатков в валюте' (DATE d) = GROUP SUM balanceCurrency(Account a, d);
+
+FORM accountBalances 'Остатки по счетам'
+    OBJECTS a = Account
+    PROPERTIES (a) READONLY nameLegalEntity, number, nameBank, addressBank, MFOBank, note, rate, dateTo, balance, balanceCurrency
+    ORDERS nameLegalEntity(a)
+    FILTERGROUP active FILTER 'Активные' active(a) DEFAULT 
+    FILTERGROUP balance FILTER 'С остатком' balance(a) DEFAULT
+    
+    OBJECTS l = AccountLedger
+    PROPERTIES (l) READONLY date, nameLegalEntity, note, sum
+    ORDERS date(l) DESC
+    FILTERS account(l) == a
+    
+    OBJECTS dates = (df = DATE, dt = DATE) PANEL 
+    PROPERTIES 'Дата с' = VALUE (df), 'Дата по' = VALUE (dt)
+    
+    OBJECTS d = DATE 
+    PROPERTIES vd 'Дата' = VALUE(d), balance(a, d), balanceCurrency(a, d)
+    ORDERS vd DESC 
+    FILTERS iterate(d, df, dt)
+    
+    OBJECTS dd = DATE 
+    PROPERTIES dd 'Дата' = VALUE (dd), balanceAccounts(dd), balanceAccountsCurrency(dd)
+    ORDERS dd DESC 
+    FILTERS iterate(dd, df, dt)
+;
+
+DESIGN accountBalances {
+    OBJECTS {
+        NEW pane {
+            fill = 1;
+            MOVE BOX (a);
+            NEW tab AFTER BOX (a) {
+                tabbed = TRUE;
+                fill = 1;
+                MOVE BOX (l);
+                NEW balances {
+                    caption = 'Динамика остатка';
+                    MOVE BOX (dates);
+                    NEW balance {
+                        horizontal = TRUE;
+                        fill = 1;
+                        MOVE BOX (d) { caption = 'По счёту'; }
+                        MOVE BOX (dd) { caption = 'По всем счетам'; }
+                    }
+                }
+            }
+        }
+    }
+}
+
+NAVIGATOR {
+    finance {
+        NEW accountBalances;
+    }
+}

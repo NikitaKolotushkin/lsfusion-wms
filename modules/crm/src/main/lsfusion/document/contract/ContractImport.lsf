@@ -1,0 +1,153 @@
+MODULE ContractImport;
+
+REQUIRE ContractFile, Import;
+
+NAMESPACE Contract;
+
+importContracts 'Импорт договоров' (FILE f) {
+    LOCAL idContract = STRING[15](INTEGER);
+    LOCAL idLegalEntity = STRING[15](INTEGER);
+    LOCAL idPersonLegalEntity = STRING[15](INTEGER);
+    LOCAL docPersonLegalEntity = STRING[50](INTEGER);
+    LOCAL idCompany = STRING[15](INTEGER);
+    LOCAL idPersonCompany = STRING[15](INTEGER);
+    LOCAL docPersonCompany = STRING[50](INTEGER);
+    LOCAL number = STRING[15](INTEGER);
+    LOCAL date1 = DATE (INTEGER);
+    LOCAL name = STRING[150](INTEGER);
+    LOCAL sum = NUMERIC[16,5] (INTEGER);
+    LOCAL currency = STRING[50](INTEGER);
+    LOCAL type = STRING[50](INTEGER);
+    LOCAL group = STRING[50](INTEGER);
+    LOCAL sending = STRING[50](INTEGER);
+    LOCAL date2 = DATE (INTEGER);
+    LOCAL date3 = DATE (INTEGER);
+    LOCAL date4 = DATE (INTEGER);
+    LOCAL date5 = DATE (INTEGER);
+    LOCAL date6 = DATE (INTEGER);
+    LOCAL date7 = DATE (INTEGER);
+    LOCAL note = STRING[100](INTEGER);
+    LOCAL text = TEXT(INTEGER);
+    LOCAL terms = TEXT(INTEGER);
+    LOCAL message = STRING[2000] ();
+    LOCAL count = INTEGER ();
+    
+    message() <- '';
+    count() <- 0;
+    
+    IMPORT XLS NOHEADER FROM f TO idContract = B, idCompany, idPersonCompany, docPersonCompany, idLegalEntity, idPersonLegalEntity, 
+        docPersonLegalEntity, number, date1, name, sum, currency, type, group, sending, date2, date3, date4, date5, date6, date7, note, text, terms;
+    
+    FOR imported(INTEGER i) AND i > 1 AND trim(idCompany(i)) AND NOT isCompany(legalEntity(trim(idCompany(i)))) DO {
+    
+        message() <- CONCAT ' ', message() + '\r\nстрока:', (i + 1), 'id:', idContract(i), 'Код компании:', idCompany(i);
+        count() <- count() + 1;
+    }
+    
+    IF count() > 0 THEN {
+        MESSAGE CONCAT ' ', 'Неимпортированные договоры, в которых компания не является компанией: ', count(), message();
+    }
+    
+    FOR [GROUP SUM 1 IF INTEGER i > 1 AND isCompany(legalEntity(trim(idCompany(i)))) BY trim(idContract(i))](STRING[15] id) AND id != '' AND NOT contract(id) DO NEW c = Contract {
+        id(c) <- id;
+    }
+    
+    FOR [GROUP SUM 1 IF INTEGER i > 2 BY trim(type(i))](STRING[50] type) AND type != '' 
+        AND NOT (GROUP MAX ContractType t IF upper(name(t)) == upper(type)) DO NEW t = ContractType {
+        
+        name(t) <- type; 
+    }
+    
+    FOR [GROUP SUM 1 IF INTEGER i > 1 BY trim(group(i))](STRING[50] group) AND group != '' 
+        AND NOT (GROUP MAX ContractGroup t IF upper(name(t)) == upper(group)) DO NEW t = ContractGroup {
+        
+        name(t) <- group; 
+    }
+    
+    FOR [GROUP SUM 1 IF INTEGER i > 1 BY trim(sending(i))](STRING[50] sending) AND sending != '' 
+        AND NOT (GROUP MAX SendingWay t IF upper(name(t)) == upper(sending)) DO NEW t = SendingWay {
+        
+        name(t) <- sending; 
+    }
+    FOR Contract c = contract(trim(idContract(INTEGER i))) AND isCompany(legalEntity(trim(idCompany(i)))) AND trim(idContract(i)) != '' AND i > 1 DO {
+        
+        legalEntity(c) <- legalEntity(trim(idLegalEntity(i)));
+        authorisedPersonLegalEntity(c) <- Contact.contact(idPersonLegalEntity(i));
+        authorisedDocumentLegalEntity(c) <- trim(docPersonLegalEntity(i));
+        company(c) <- legalEntity(trim(idCompany(i)));
+        authorisedPersonCompany(c) <- Contact.contact(idPersonCompany(i));
+        authorisedDocumentCompany(c) <- trim(docPersonCompany(i));
+        number(c) <- trim(number(i));
+        date(c) <- date1(i);
+        name(c) <- trim(name(i));
+        sum(c) <- sum(i);
+        currency(c) <- currency(currency(i));
+        type(c) <- GROUP MAX ContractType t IF upper(name(t)) == upper(trim(type(i)));
+        group(c) <- GROUP MAX ContractGroup t IF upper(name(t)) == upper(trim(group(i)));
+        sendingWay(c) <- GROUP MAX SendingWay s IF upper(name(s)) == upper(trim(sending(i)));
+        dateSigningCompany(c) <- date2(i);
+        dateSending(c) <- date3(i);
+        dateSigningCustomer(c) <- date4(i);
+        dateReceiving(c) <- date5(i);
+        dateTo(c) <- date6(i);
+        dateClosing(c) <- date7(i);
+        note(c) <- trim(note(i));
+        text(c) <- trim(text(i));
+        terms(c) <- trim(terms(i));
+    }
+}
+
+importContracts 'Импорт договоров' () {
+    NEWSESSION INPUT f = FILE DO {
+        importContracts(f);
+        APPLY;
+    }
+}
+
+FORM exportContracts 'Экспорт договоров'
+    OBJECTS c = Contract
+    PROPERTIES (c) id, idCompany, idAuthorisedPersonCompany, authorisedDocumentCompany, idLegalEntity, idAuthorisedPersonLegalEntity, 
+                   authorisedDocumentLegalEntity, number, date, name, sum, sidCurrency, nameType, nameGroup, nameSendingWay, 
+                   dateSigningCompany, dateSending, dateSigningCustomer, dateReceiving, dateTo, dateClosing, note, text, terms
+    ORDERS date(c)
+;
+
+exportContracts 'Экспорт договоров' () {
+    
+    LOCAL file = FILE();
+    
+    PRINT exportContracts XLS TO file;
+    WRITE CLIENT DIALOG file() TO 'Договоры';
+    open(file(), 'Договоры');
+}
+
+EXTEND FORM migrationData PROPERTIES() exportContracts, importContracts;
+
+importContractDocumentsXls 'Импорт документов договоров' () {
+    
+    NEWSESSION {
+        LOCAL id = STRING[15](INTEGER);
+        LOCAL path = STRING[250](INTEGER);
+        LOCAL file = FILE();
+        
+        INPUT f = FILE DO {
+            IMPORT XLS NOHEADER FROM f TO id, path;
+            
+            FOR Contract c = contract(id(INTEGER i)) AND id(i) AND i > 0 DO {
+                TRY {
+                    READ 'file://' + documentPath() + '/' + replace(upper(trim(path(i))), '\\', '/') TO file;
+                    NEW df = DocumentFile {
+                        document(df) <- c;
+                        file(df) <- file();
+                        dateTime(df) <- currentDateTime();
+                        user(df) <- currentUser();
+                    }
+                }
+            }
+        }
+        APPLY;
+    }
+}
+
+EXTEND FORM migrationData PROPERTIES() importContractDocumentsXls;
+DESIGN migrationData { importDocuments { MOVE PROPERTY(importContractDocumentsXls()); } }

@@ -1,0 +1,188 @@
+MODULE ContractWord;
+
+REQUIRE ContractFile, DocWord, LegalEntity, ContractSubject;
+
+NAMESPACE Contract;
+
+in 'Вкл.' = DATA BOOLEAN (ContractType, Template);
+
+FORM documentTemplates 'Шаблоны'
+    OBJECTS ct = ContractType
+    PROPERTIES READONLY name(ct)
+    
+    OBJECTS t = Template
+    PROPERTIES in(ct, t), name(t) READONLY, id(t) READONLY 
+    PROPERTIES (t) NEWSESSION NEW, EDIT, DELETE
+    PROPERTIES copy(t) DRAW t TOOLBAR 
+    
+    FILTERGROUP in FILTER 'Отмеченные' in(ct, t) 
+;
+
+DESIGN documentTemplates {
+    OBJECTS {
+        NEW tab {
+            tabbed = TRUE;
+            fill = 1;
+            NEW contract {
+                caption = 'Типы договора';
+                horizontal = TRUE;
+                MOVE BOX (ct) {
+                    fill = 1;
+                }
+                MOVE BOX (t) {
+                    fill = 4;
+                }
+            }
+        }
+    }  
+}
+
+NAVIGATOR {
+    contractFolder {
+        NEW documentTemplates;
+    }
+}
+
+FORM dialogContractTypeTemplates 'Шаблоны Word'
+    OBJECTS c = ContractType PANEL 
+    OBJECTS t = Template
+    PROPERTIES (t) READONLY name, id
+    FILTERS in(c, t)
+;
+
+overPrintContractWord ABSTRACT LIST (Contract, Template);
+
+createContractTemplate 'Сформировать по шаблону' (Contract ct, Template t) {
+    value(TemplateEntry d) <- OVERRIDE number(ct), '' WHERE key(d) = 'NUMBER_DOCUMENT' AND template (d) == t;
+    value(TemplateEntry d) <- TEXT (toDateDDMMYYYY(date(ct))) WHERE key(d) = 'DATE_DOCUMENT' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE nameCustomer(ct), '' WHERE key(d) = 'NAME_CUSTOMER' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE overName(legalEntity(ct)), '' WHERE key(d) = 'NAME_LEGAL_ENTITY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE overName(company(ct)), '' WHERE key(d) = 'NAME_COMPANY' AND template (d) == t;
+    value(TemplateEntry d) <- toCharRus(sum(ct)) WHERE key(d) = 'SUM_DOCUMENT_NUMERIC' AND template (d) == t;
+    TRY { value(TemplateEntry d) <- numSpelledCurrency(sum(ct), '00d', currency(ct)) WHERE key(d) = 'SUM_DOCUMENT_WORDS' AND template (d) == t; }
+    value(TemplateEntry d) <- OVERRIDE nameType(ct), '' WHERE key(d) = 'TYPE_DOCUMENT' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE nameSendingWay(ct), '' WHERE key(d) = 'SENDING_WAY' AND template (d) == t;
+    value(TemplateEntry d) <- TEXT (toDateDDMMYYYY(dateSending(ct))) WHERE key(d) = 'SENDING_DATE_DOCUMENT' AND template (d) == t;
+    value(TemplateEntry d) <- TEXT (toDateDDMMYYYY(dateReceiving(ct))) WHERE key(d) = 'RECEIVING_DATE_DOCUMENT' AND template (d) == t;
+    value(TemplateEntry d) <- TEXT (toDateDDMMYYYY(dateSigningCompany(ct))) WHERE key(d) = 'SIGNING_DATE_COMPANY' AND template (d) == t;
+    value(TemplateEntry d) <- TEXT (toDateDDMMYYYY(dateSigningCustomer(ct))) WHERE key(d) = 'SIGNING_DATE_CUSTOMER' AND template (d) == t;
+    value(TemplateEntry d) <- TEXT (toDateDDMMYYYY(dateTo(ct))) WHERE key(d) = 'TO_DATE_DOCUMENT' AND template (d) == t;
+    value(TemplateEntry d) <- TEXT (toDateDDMMYYYY(dateClosing(ct))) WHERE key(d) = 'CLOSING_DATE_DOCUMENT' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE note(ct), '' WHERE key(d) = 'NOTE_DOCUMENT' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE text(ct), '' WHERE key(d) = 'TEXT_DOCUMENT' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE authorisedDocumentLegalEntity(ct), '' WHERE key(d) = 'AUTHORISED_DOCUMENT_CUSTOMER' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE authorisedDocumentCompany(ct), '' WHERE key(d) = 'AUTHORISED_DOCUMENT_COMPANY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE shortName(authorisedPersonLegalEntity(ct)), '' WHERE key(d) = 'SHORT_NAME_AUTHORISED_PERSON_CUSTOMER' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE fullName(authorisedPersonLegalEntity(ct)), '' WHERE key(d) = 'FULL_NAME_AUTHORISED_PERSON_CUSTOMER' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE shortName(authorisedPersonCompany(ct)), '' WHERE key(d) = 'SHORT_NAME_AUTHORISED_PERSON_COMPANY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE shortName(authorisedPersonCompany(ct)), '' WHERE key(d) = 'FULL_NAME_AUTHORISED_PERSON_COMPANY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE fullNameRp(authorisedPersonLegalEntity(ct)), '' WHERE key(d) = 'FULL_NAME_RP_AUTHORISED_PERSON_CUSTOMER' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE fullNameRp(authorisedPersonCompany(ct)), '' WHERE key(d) = 'FULL_NAME_RP_AUTHORISED_PERSON_COMPANY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE namePosition(authorisedPersonCompany(ct)), '' WHERE key(d) = 'POSITION_AUTHORISED_PERSON_COMPANY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE nameRpPosition(authorisedPersonCompany(ct)), '' WHERE key(d) = 'POSITION_RP_AUTHORISED_PERSON_COMPANY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE namePosition(authorisedPersonLegalEntity(ct)), '' WHERE key(d) = 'POSITION_AUTHORISED_PERSON_CUSTOMER' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE nameRpPosition(authorisedPersonLegalEntity(ct)), '' WHERE key(d) = 'POSITION_RP_AUTHORISED_PERSON_CUSTOMER' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE nameLegalAddress(company(ct)), '' WHERE key(d) = 'ADDRESS_COMPANY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE postcode(legalAddress(company(ct))), '' WHERE key(d) = 'POSTCODE_COMPANY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE number(account(company(ct))), '' WHERE key(d) = 'ACCOUNT_COMPANY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE nameBank(company(ct)), '' WHERE key(d) = 'NAME_BANK_COMPANY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE postcodeBank(company(ct)), '' WHERE key(d) = 'POSTCODE_BANK_COMPANY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE addressBank(company(ct)), '' WHERE key(d) = 'ADDRESS_BANK_COMPANY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE mfoBank(company(ct)), '' WHERE key(d) = 'MFO_BANK_COMPANY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE nameLegalAddress(legalEntity(ct)), '' WHERE key(d) = 'ADDRESS_LEGAL_ENTITY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE postcode(legalAddress(legalEntity(ct))), '' WHERE key(d) = 'POSTCODE_LEGAL_ENTITY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE number(account(legalEntity(ct))), '' WHERE key(d) = 'ACCOUNT_LEGAL_ENTITY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE nameBank(legalEntity(ct)), '' WHERE key(d) = 'NAME_BANK_LEGAL_ENTITY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE postcodeBank(legalEntity(ct)), '' WHERE key(d) = 'POSTCODE_BANK_LEGAL_ENTITY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE addressBank(legalEntity(ct)), '' WHERE key(d) = 'ADDRESS_BANK_LEGAL_ENTITY' AND template (d) == t;
+    value(TemplateEntry d) <- OVERRIDE mfoBank(legalEntity(ct)), '' WHERE key(d) = 'MFO_BANK_LEGAL_ENTITY' AND template (d) == t;
+    
+    FOR ContractSubject cs = [GROUP LAST ContractSubject css ORDER date(css) IF date(css) <= date(contract(css)) BY type(css), contract(css)](SubjectType cst, ct) DO {
+    
+        value(TemplateEntry d) <- TEXT (quantity(cs)) WHERE key(d) = id(cst) + '_QUANTITY' AND template (d) == t;
+        value(TemplateEntry d) <- toCharRus(round2(price(cs))) WHERE key(d) = id(cst) + '_PRICE_NUMERIC' AND template (d) == t;
+        value(TemplateEntry d) <- numSpelledCurrency(price(cs), '00d', currency(ct)) WHERE key(d) = id(cst) + '_PRICE_WORDS' AND template (d) == t;
+        value(TemplateEntry d) <- toCharRus(round2(sum(cs))) WHERE key(d) = id(cst) + '_SUM_NUMERIC' AND template (d) == t;
+        TRY { value(TemplateEntry d) <- numSpelledCurrency(sum(cs), '00d', currency(ct)) WHERE key(d) = id(cst) + '_SUM_WORDS' AND template (d) == t; }
+    }
+    overPrintContractWord(ct, t);
+}
+
+printContractWord 'Сформировать по шаблону' (Contract ct) {
+    DIALOG dialogContractTypeTemplates OBJECTS c = type(ct), t INPUT DO {
+        createContractTemplate(ct, t);
+        SHOW editTemplate OBJECTS t = t;
+    }
+}
+EXTEND FORM contract PROPERTIES printContractWord(o);
+
+DESIGN contract {
+    file {
+        MOVE PROPERTY (printContractWord(o));
+    }
+}
+
+createTemplateEntries ABSTRACT LIST (Template, DocType);
+
+createTemplateEntries(Template t, DocType d) +{
+    IF d IS DocType THEN {
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'NUMBER_DOCUMENT'; description(te) <- 'Номер документа'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'DATE_DOCUMENT'; description(te) <- 'Дата документа'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'TYPE_DOCUMENT'; description(te) <- 'Тип документа'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'NAME_CUSTOMER'; description(te) <- 'Клиент'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'NAME_COMPANY'; description(te) <- 'Компания'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'NAME_LEGAL_ENTITY'; description(te) <- 'Организация'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'SUM_DOCUMENT_NUMERIC'; description(te) <- 'Сумма (число)'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'SUM_DOCUMENT_WORDS'; description(te) <- 'Сумма (прописью)'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'SENDING_DATE_DOCUMENT'; description(te) <- 'Дата отправки'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'RECEIVING_DATE_DOCUMENT'; description(te) <- 'Дата получения'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'NOTE_DOCUMENT'; description(te) <- 'Примечание'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'TEXT_DOCUMENT'; description(te) <- 'Текст'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'AUTHORISED_DOCUMENT_COMPANY'; description(te) <- 'Основание уп. лица компании'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'AUTHORISED_DOCUMENT_CUSTOMER'; description(te) <- 'Основание уп. лица организации'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'SHORT_NAME_AUTHORISED_PERSON_COMPANY'; description(te) <- 'ФИО(сокр.) уп. лица компании'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'FULL_NAME_AUTHORISED_PERSON_COMPANY'; description(te) <- 'ФИО(полное) уп. лица компании'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'FULL_NAME_RP_AUTHORISED_PERSON_COMPANY'; description(te) <- 'ФИО(полное)(р.п.) уп. лица компании'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'SHORT_NAME_AUTHORISED_PERSON_CUSTOMER'; description(te) <- 'ФИО(сокр.) уп. лица организации'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'FULL_NAME_AUTHORISED_PERSON_CUSTOMER'; description(te) <- 'ФИО(полное) уп. лица организации'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'FULL_NAME_RP_AUTHORISED_PERSON_CUSTOMER'; description(te) <- 'ФИО(полное)(р.п.) уп. лица организации'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'POSITION_AUTHORISED_PERSON_COMPANY'; description(te) <- 'Должность уп. лица компании'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'POSITION_RP_AUTHORISED_PERSON_COMPANY'; description(te) <- 'Должность(р.п.) уп. лица компании'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'POSITION_AUTHORISED_PERSON_CUSTOMER'; description(te) <- 'Должность уп. лица организации'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'POSITION_RP_AUTHORISED_PERSON_CUSTOMER'; description(te) <- 'Должность(р.п.) уп. лица организации'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'ADDRESS_COMPANY'; description(te) <- 'Адрес компании'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'POSTCODE_COMPANY'; description(te) <- 'Почтовый индекс компании'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'ACCOUNT_COMPANY'; description(te) <- 'Номер р/с компании'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'NAME_BANK_COMPANY'; description(te) <- 'Наименование банка компании'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'POSTCODE_BANK_COMPANY'; description(te) <- 'Почтовый индекс банка компании'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'ADDRESS_BANK_COMPANY'; description(te) <- 'Адрес банка компании'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'MFO_BANK_COMPANY'; description(te) <- 'МФО банка компании'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'UNP_COMPANY'; description(te) <- 'УНП компании'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'OKPO_COMPANY'; description(te) <- 'ОКПО компании'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'ADDRESS_LEGAL_ENTITY'; description(te) <- 'Адрес организации'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'POSTCODE_LEGAL_ENTITY'; description(te) <- 'Почтовый индекс организации'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'ACCOUNT_LEGAL_ENTITY'; description(te) <- 'Номер р/с организации'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'NAME_BANK_LEGAL_ENTITY'; description(te) <- 'Наименование банка организации'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'POSTCODE_BANK_LEGAL_ENTITY'; description(te) <- 'Почтовый индекс банка организации'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'ADDRESS_BANK_LEGAL_ENTITY'; description(te) <- 'Адрес банка организации'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'MFO_BANK_LEGAL_ENTITY'; description(te) <- 'МФО банка организации'; }
+    }
+}
+
+createTemplateEntries(Template t, DocType d) +{
+    IF d == DocType.contract THEN {
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'SENDING_WAY'; description(te) <- 'Способ отправки договора'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'SIGNING_DATE_COMPANY'; description(te) <- 'Дата подписания компанией'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'SIGNING_DATE_CUSTOMER'; description(te) <- 'Дата подписания организацией'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'TO_DATE_DOCUMENT'; description(te) <- 'Дата окончания'; }
+        NEW te = TemplateEntry { template(te) <- t; key(te) <- 'CLOSING_DATE_DOCUMENT'; description(te) <- 'Дата закрытия'; }
+    }
+}
+
+createTimeEntriesDialog 'Сформировать строки' (Template t) {
+    DIALOG dialogDocTypes OBJECTS d INPUT DO {
+        createTemplateEntries(t, d);
+    }
+}
+
+EXTEND FORM template PROPERTIES createTimeEntriesDialog(t) DRAW te TOOLBAR, required(te) AFTER value(te);

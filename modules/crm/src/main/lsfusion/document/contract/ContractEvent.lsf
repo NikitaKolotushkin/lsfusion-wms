@@ -1,0 +1,29 @@
+MODULE ContractEvent;
+
+REQUIRE Contract, DocEvent;
+
+NAMESPACE Contract;
+
+contract = DATA Contract(Event);
+idContract 'Код договора' (Event e) = id(contract(e));
+numberContract 'Договор' (Event e) = number(contract(e));
+
+EXTEND FORM events PROPERTIES numberContract(o);
+EXTEND FORM event PROPERTIES numberContract(o);
+
+DESIGN event {
+    docs {
+        MOVE PROPERTY (numberContract(o));
+    }
+}
+
+addEvent (Event e, Contract c) + {
+    contract(e) <- c;
+}
+WHEN LOCAL SETCHANGED (contract(Event e)) AND NOT CHANGED (customer(e)) AND NOT CHANGED (legalEntity(e)) DO {
+    customer(e) <- customer(contract(e));
+    legalEntity(e) <- legalEntity(contract(e));
+}
+
+CONSTRAINT customer(Event e) AND contract(e) AND NOT customer(contract(e)) == customer(e) CHECKED BY contract[Event] MESSAGE 'Клиент договора не совпадает с клиентом';
+CONSTRAINT legalEntity(Event e) AND contract(e) AND NOT legalEntity(contract(e)) == legalEntity(e) CHECKED BY contract[Event] MESSAGE 'Организация договора не совпадает с организацией';

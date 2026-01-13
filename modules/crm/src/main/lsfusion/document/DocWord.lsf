@@ -1,0 +1,104 @@
+MODULE DocWord;
+
+REQUIRE Word, Currency;
+
+NAMESPACE Doc;
+
+required 'Обязателен для заполнения' = DATA BOOLEAN (TemplateEntry);
+
+createWordOnOK 'Сформировать' (Template t) {
+    IF NOT [GROUP SUM 1 IF required(TemplateEntry d) AND NOT value(d) BY template(d)](t) THEN {
+        process(t);
+        open(resultTemplate());
+        formOk();
+    }
+    ELSE {
+        MESSAGE CONCAT '', 'Заполнены не все обязательные поля:', '\r\n' + 
+            [GROUP CONCAT (OVERRIDE description(TemplateEntry te), key(te)) IF required(te) AND NOT value(te), ', ' ORDER te BY template(te)](t) NOWAIT;
+    }
+}
+
+background = ABSTRACT CASE COLOR (TemplateEntry);
+backgroundValue (TemplateEntry te) = CASE WHEN required(te) THEN RGB (255, 235, 235)
+                                                   WHEN NOT required(te) THEN background(te);
+
+valueString 'Значение' (TemplateEntry te) = ISTRING[1000] (value(te)) CHARWIDTH 20;
+
+changeTextTemplateEntry (TemplateEntry te) {
+    INPUT t = ISTRING[1000] DO {
+        value(te) <- t;
+    }
+}
+
+FORM editTemplate 'Шаблон' 
+    OBJECTS t = Template PANEL 
+    PROPERTIES (t) READONLY name, id
+    
+    OBJECTS te = TemplateEntry
+    PROPERTIES (te) READONLY nameType BACKGROUND background(te), key BACKGROUND background(te), description BACKGROUND background(te)
+    PROPERTIES (te) BACKGROUND backgroundValue(te) valueString ON CHANGE changeTextTemplateEntry(te)
+    PROPERTIES (te) value PANEL
+    PROPERTIES createWordOnOK(t)
+    
+    FILTERS template (te) = t
+;
+
+DESIGN editTemplate {
+    BOX {
+        size = (1200, 768);
+        MOVE BOX(t) {
+            horizontal = TRUE;
+            NEW row1 {
+                horizontal = TRUE;
+                MOVE PROPERTY(name(t));
+                MOVE PROPERTY(id(t));
+            };
+        }
+        NEW row2 {
+            horizontal = TRUE;
+            fill = 1;
+            MOVE BOX(te) { 
+                fill = 2;
+            }
+            NEW value {
+                caption = 'Значение';
+                fill = 1;
+                MOVE PROPERTY (value(te)) { caption = ''; fill = 1; valueWidth = 50; }
+            }
+        }
+    }
+    MOVE TOOLBARBOX {
+        TOOLBARRIGHT {
+            MOVE PROPERTY (createWordOnOK(t)) AFTER PROPERTY (formOk()) { alignment = STRETCH; }
+            REMOVE PROPERTY (formOk());
+        }
+    }
+    PROPERTY (value(te)) { charWidth = 80; }
+}
+
+upperFirstChar (TEXT t) = upper(left(t, 1)) + right(t, length(t)-1);
+
+toCharRus (NUMERIC[18,2] n) = replace(replace(TEXT (round2(n)), ',', ' '), '.', ',');
+numSpelled = FORMULA TEXT 'num_spelled($1,$2,string_to_array($3,\',\'),$4,string_to_array($5,\',\'),$6)';
+numSpelledRouble (NUMERIC[14,2] number, STRING[10] decFormat) = upperFirstChar(numSpelled(number, 'M', 'рубль,рубля,рублей', 'F', 'копейка,копейки,копеек', decFormat));
+numSpelledCurrency (NUMERIC[14,2] number, STRING[10] decFormat, Currency c) = upperFirstChar(numSpelled(number, 'M', nameWord(c), 'F', nameCoinsWord(c), decFormat));
+
+// Копирование шаблона
+
+overCopy ABSTRACT LIST (TemplateEntry, TemplateEntry);
+
+copy 'Копировать' (Template t) {
+    NEWSESSION NEW n = Template {
+        name(n) <- name(t);
+        file(n) <- file(t);
+        FOR template(TemplateEntry e) == t DO NEW ne = TemplateEntry {
+            template(ne) <- n;
+            type(ne) <- type(e);
+            key(ne) <- key(e);
+            description(ne) <- description(e);
+            value(ne) <- value(e);
+            overCopy(ne, e);
+        }
+        SHOW template OBJECTS t = n DOCKED;
+    }
+}

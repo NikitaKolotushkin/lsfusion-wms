@@ -1,0 +1,340 @@
+MODULE Contract;
+
+REQUIRE LegalEntity, Doc, Currency, Numerator, Contact;
+
+NAMESPACE Contract;
+
+CLASS Contract 'Договор' : Document;
+TABLE contract (Contract);
+
+id 'Код' = DATA STRING[15] (Contract) CHARWIDTH 5 IN id;
+contract (id) = GROUP AGGR Contract c BY id (c);
+
+name 'Наименование' = DATA ISTRING[150](Contract) CHARWIDTH 20;
+series 'Серия' = DATA BPSTRING[2](Contract);
+number 'Номер' = DATA STRING[15](Contract) IN id;
+
+legalEntity = DATA LegalEntity(Contract) NONULL INDEXED;
+idLegalEntity 'Код организации' (Contract c) = id(legalEntity(c));
+nameLegalEntity 'Организация' (Contract c) = name(legalEntity(c)) IN id;
+customer (Contract c) = customer(legalEntity(c)) MATERIALIZED INDEXED;
+nameCustomer 'Клиент' (Contract c) = name(customer(legalEntity(c)));
+
+company = DATA LegalEntity(Contract) NONULL INDEXED;
+idCompany 'Код компании' (Contract c) = id(company(c));
+nameCompany 'Компания' (Contract c) = name(company(c)) IN id;
+
+authorisedPersonLegalEntity = DATA Contact.Contact(Contract);
+idAuthorisedPersonLegalEntity 'Код уп. лица организации' (Contract c) = id(authorisedPersonLegalEntity(c));
+nameAuthorisedPersonLegalEntity 'Уп. лицо организации' (Contract c) = name(authorisedPersonLegalEntity(c));
+authorisedDocumentLegalEntity 'На основании' = DATA ISTRING[1000](Contract) CHARWIDTH 20;
+
+authorisedPersonCompany  (Contract c) = DATA Contact.Contact(Contract);
+idAuthorisedPersonCompany 'Код уп. лица компании' (Contract c) = id(authorisedPersonCompany(c));
+nameAuthorisedPersonCompany 'Уп. лицо компании' (Contract c) = name(authorisedPersonCompany(c));
+authorisedDocumentCompany 'На основании' = DATA ISTRING[1000](Contract) CHARWIDTH 20;
+
+WHEN LOCAL CHANGED (legalEntity(Contract c)) DO {
+    authorisedPersonLegalEntity (c) <- authorisedPerson(legalEntity(c));
+    authorisedDocumentLegalEntity (c) <- OVERRIDE authorisedDocument(authorisedPersonLegalEntity(c)), authorisedDocument(legalEntity(c));
+}
+WHEN LOCAL CHANGED (authorisedPersonLegalEntity(Contract c)) AND NOT CHANGED (legalEntity(c)) DO {
+    authorisedDocumentLegalEntity (c) <- authorisedDocument(authorisedPersonLegalEntity(c));
+}
+WHEN LOCAL CHANGED (company(Contract c)) DO {
+    authorisedPersonCompany (c) <- authorisedPerson(company(c));
+    authorisedDocumentCompany (c) <- OVERRIDE authorisedDocument(authorisedPersonCompany(c)), authorisedDocument(company(c));
+}
+WHEN LOCAL CHANGED (authorisedPersonCompany(Contract c)) AND NOT CHANGED (company(c)) DO {
+    authorisedDocumentCompany (c) <- authorisedDocument(authorisedPersonCompany(c));
+}
+
+CONSTRAINT authorisedPersonLegalEntity(Contract c) AND NOT legalEntity(authorisedPersonLegalEntity(c)) == legalEntity(c) 
+    CHECKED BY authorisedPersonLegalEntity[Contract] MESSAGE 'Организация уполномоченного лица не совпадает с организацией договора';
+CONSTRAINT authorisedPersonCompany(Contract c) AND NOT legalEntity(authorisedPersonCompany(c)) == company(c) 
+    CHECKED BY authorisedPersonCompany[Contract] MESSAGE 'Организация уполномоченного лица не совпадает с компанией договора';
+CONSTRAINT company(Contract c) AND NOT isCompany(company(c)) CHECKED BY company[Contract] MESSAGE 'Компания договора не является компанией';
+
+date 'Дата' = DATA DATE (Contract) IN id;
+sum 'Стоимость' = DATA NUMERIC[16,5](Contract) CHARWIDTH 10;
+
+currency = DATA Currency (Contract);
+nameCurrnecy 'Валюта' (Contract d) = name(currency(d));
+shortNameCurrency 'Валюта (сокр.)' (Contract p) = shortName(currency(p));
+sidCurrency 'Валюта (сокр.)' (Contract p) = sid(currency(p));
+
+inCurrency 'В валюте' = DATA BOOLEAN (Contract);
+sumCurrency 'Стоимость в валюте' = DATA NUMERIC[16,5](Contract);
+
+currency(Contract c) <- defaultCurrency() WHEN SET(c IS Contract);
+
+WHEN LOCAL (SETCHANGED (sumCurrency(Contract c)) OR CHANGED (currency(c))) AND inCurrency(c) AND sumCurrency(c) AND NOT CHANGED (sum(c)) DO {
+    sum(c) <- round2(sumCurrency(c) / OVERRIDE (rateOn(defaultTypeExchange(), currency(c), date(c))), 1);
+}
+
+CLASS ContractType 'Тип договора' : Type;
+TABLE contractType(ContractType);
+
+name 'Наименование' = DATA ISTRING[50](ContractType) CHARWIDTH 15;
+postfix 'Постфикс' = DATA ISTRING[5](ContractType);
+
+name(ContractType c) += name(c);
+
+FORM contractType 'Тип договора'
+    OBJECTS o = ContractType PANEL
+    PROPERTIES(o) name, postfix
+    
+    EDIT ContractType OBJECT o
+;
+
+FORM contractTypes 'Типы договора'
+    OBJECTS o = ContractType
+    PROPERTIES(o) READONLY name, postfix
+    PROPERTIES (o) NEWSESSION NEW, EDIT, DELETE
+    
+    LIST ContractType OBJECT o
+;
+
+type = DATA ContractType(Contract);
+nameType 'Тип договора' (Contract c) = name(type(c)) CHARWIDTH 15;
+
+description (Contract c) = CONCAT ' / ', number(c), date(c), name(c), nameType(c) CHARWIDTH 25; 
+
+numerator '{numerator.id.numerator}' = DATA Numerator (Contract);
+nameNumerator '{numerator.numerator}' (Contract o) = name(numerator(o)) IN numbered CHARWIDTH 7;
+
+generateSeriesNumber '{numerator.generate.number}'(Contract o)  { 
+    number(o) <- CONCAT '-', curValue(numerator(o)), postfix(type(o));
+    series(o) <- series(numerator(o));
+    incrementValueSession(numerator(o));
+}
+
+WHEN SETCHANGED(numerator(Contract o)) AND
+     NOT CHANGED(number(o)) AND
+     NOT CHANGED(series(o))
+     DO generateSeriesNumber(o) ;
+@defineNumeratedDefaultPrefix(Contract, 'Договоры', 'ДГ', );
+
+CLASS ContractGroup 'Группа договоров';
+TABLE contractGroup(ContractGroup);
+
+name 'Наименование' = DATA ISTRING[50](ContractGroup) CHARWIDTH 15;
+
+FORM contractGroup 'Группа договоров'
+    OBJECTS o = ContractGroup PANEL
+    PROPERTIES(o) name
+    
+    EDIT ContractGroup OBJECT o
+;
+
+FORM contractGroups 'Группы договоров'
+    OBJECTS o = ContractGroup
+    PROPERTIES(o) READONLY name
+    PROPERTIES (o) NEWSESSION NEW, EDIT, DELETE
+    
+    LIST ContractGroup OBJECT o
+;
+
+group = DATA ContractGroup(Contract);
+nameGroup 'Группа договоров' (Contract c) = name(group(c)) CHARWIDTH 15;
+
+sendingWay = DATA SendingWay(Contract);
+nameSendingWay 'Способ отправки договора' (Contract c) = name(sendingWay(c));
+
+dateSigningCompany 'Дата подписания компанией' = DATA DATE (Contract);
+dateSending 'Дата отправки' = DATA DATE (Contract);
+dateSigningCustomer 'Дата подписания клиентом' = DATA DATE (Contract);
+dateReceiving 'Дата получения' = DATA DATE (Contract);
+dateTo 'Дата окончания' = DATA DATE (Contract);
+dateClosing 'Дата закрытия' = DATA DATE (Contract);
+note 'Примечание' = DATA ISTRING[100](Contract) CHARWIDTH 20;
+text 'Текст' = DATA TEXT (Contract);
+textString 'Текст' (Contract c) = ISTRING[500](text(c)) CHARWIDTH 20;
+terms 'Условия' = DATA TEXT (Contract) CHARWIDTH 20;
+
+contract = ABSTRACT Contract (Document);
+numberContract 'Номер договора' (Document d) = number(contract(d)) CHARWIDTH 10;
+dateContract 'Дата договора' (Document d) = date(contract(d));
+nameTypeContract 'Тип договора' (Document d) = nameType(contract(d));
+
+id(Contract c) += id(c);
+number(Contract c) += number(c);
+name(Contract c) += name(c);
+date(Contract c) += date(c);
+type(Contract c) += type(c);
+note(Contract c) += note(c);
+text(Contract c) += text(c);
+dateSigningCompany(Contract c) += dateSigningCompany(c);
+dateSending(Contract c) += dateSending(c);
+dateSigningCustomer(Contract c) += dateSigningCustomer(c);
+dateReceiving(Contract c) += dateReceiving(c);
+dateClosing(Contract c) += dateClosing(c);
+customer(Contract c) += customer(c);
+legalEntity(Contract c) += legalEntity(c);
+company(Contract c) += company(c);
+contract(Contract c) += c IF c IS Contract;
+sum(Contract c) += sum(c);
+sumCurrency(Contract c) += round2(sumCurrency(c));
+inCurrency(Contract c) += inCurrency(c);
+currency(Contract c) += currency(c);
+description(Contract c) += CONCAT ' ', 'Дог.', '№' + number(c), 'от ' + toDateDDMMYY(date(c));
+sendingWay(Contract c) += sendingWay(c);
+fileName(Contract c) += ISTRING[250] (CONCAT '_', nameLegalEntity(c), 'Договор', number(c), 'от_' + toDateDDMMYY(date(c)));
+
+EXTEND CLASS DocType {
+    contract 'Договор'
+}
+docType(Contract c) += DocType.contract IF c IS Contract;
+docType(ContractType c) += DocType.contract IF c IS ContractType;
+
+FORM contract 'Договор'
+    OBJECTS o = Contract PANEL
+    PROPERTIES(o) id, nameCustomer READONLY, nameLegalEntity, nameCompany, number, date, name, sum, nameType, nameGroup, nameSendingWay, 
+                  dateSigningCompany, dateSending, dateSigningCustomer, dateReceiving, dateTo, dateClosing, note, text, terms,
+                  inCurrency, shortNameCurrency, sumCurrency SHOWIF inCurrency(o), 
+                  nameNumerator, series, nameAuthorisedPersonLegalEntity, nameAuthorisedPersonCompany,
+                  authorisedDocumentLegalEntity, authorisedDocumentCompany
+    
+    EDIT Contract OBJECT o
+;
+
+DESIGN contract {
+    OBJECTS {
+        BOX (o) {
+            NEW header FIRST {
+                fill = 1;
+                NEW top1 {
+                    horizontal = TRUE;
+                    alignment = STRETCH;
+                    NEW main {
+                        caption = 'Основные параметры';
+                        MOVE PROPERTY (id(o));
+                        MOVE PROPERTY (nameType(o));
+                        MOVE PROPERTY (nameGroup(o));
+                        MOVE PROPERTY (name(o));
+                        MOVE PROPERTY (nameNumerator(o));
+                        NEW number {
+                            horizontal = TRUE;
+                            MOVE PROPERTY (series(o));
+                            MOVE PROPERTY (number(o));
+                        }
+                        MOVE PROPERTY (date(o));
+                    }
+                    NEW legalEntities {
+                        caption = 'Контрагенты';
+                        flex = 1;
+                        MOVE PROPERTY (nameCompany(o));
+                        NEW autC {
+                            horizontal = TRUE;
+                            fill = 1;
+                            MOVE PROPERTY (nameAuthorisedPersonCompany(o));
+                            MOVE PROPERTY (authorisedDocumentCompany(o));
+                        }
+                        MOVE PROPERTY (nameCustomer(o));
+                        MOVE PROPERTY (nameLegalEntity(o));
+                        NEW autL {
+                            horizontal = TRUE;
+                            fill = 1;
+                            MOVE PROPERTY (nameAuthorisedPersonLegalEntity(o));
+                            MOVE PROPERTY (authorisedDocumentLegalEntity(o));
+                        }
+                    }
+                }
+                NEW processing {
+                    caption = 'Обработка';
+                    lines = 3;
+                    childrenAlignment = END;
+                    MOVE PROPERTY (nameSendingWay(o));
+                    MOVE PROPERTY (dateSigningCompany(o));
+                    MOVE PROPERTY (dateSending(o));
+                    MOVE PROPERTY (dateSigningCustomer(o));
+                    MOVE PROPERTY (dateReceiving(o));
+                    MOVE PROPERTY (dateTo(o));
+                    MOVE PROPERTY (dateClosing(o));
+                }
+                NEW top2 {
+                    horizontal = TRUE;
+                    alignment = STRETCH;
+                    NEW payment {
+                        caption = 'Задолженность';
+                        horizontal = TRUE;
+                        MOVE PROPERTY (sum(o));
+                        MOVE PROPERTY (shortNameCurrency(o));
+                        MOVE PROPERTY (inCurrency(o));
+                    }
+                    NEW add {
+                        caption = 'Дополнительно';
+                        fill = 1;
+                        alignment = STRETCH;
+                        MOVE PROPERTY (note(o));
+                    }
+                }
+            }
+        }
+        NEW details {
+            tabbed = TRUE;
+            fill = 1;
+            NEW text {
+                caption = 'Содержание';
+                fill = 1;
+                horizontal = TRUE;
+                NEW texts {
+                    caption = 'Текст';
+                    fill = 1;
+                    MOVE PROPERTY (text(o)) { 
+                        caption = '';
+                        fill = 1;
+                    }
+                }
+                NEW terms {
+                    caption = 'Условия';
+                    fill = 1;
+                    MOVE PROPERTY (terms(o)) { 
+                        caption = '';
+                        fill = 1;
+                    }
+                }
+            }
+        }
+    }
+}
+
+FORM contracts 'Договоры'
+    OBJECTS o = Contract LAST 
+    PROPERTIES(o) READONLY id, nameCustomer, nameLegalEntity, nameCompany, number, date, name, sum, shortNameCurrency, sumCurrency, nameType, nameGroup, nameSendingWay, 
+                           dateSigningCompany, dateSending, dateSigningCustomer, dateReceiving, dateTo, dateClosing, note, textString
+    PROPERTIES(o) NEWSESSION NEW, EDIT, DELETE
+    ORDERS date(o)
+;
+
+active (Contract c) = NOT dateClosing(c) <= currentDate();
+
+FORM dialogContracts 'Договоры'
+    OBJECTS o = Contract LAST 
+    PROPERTIES(o) READONLY id, nameCustomer, nameLegalEntity, nameCompany, number, date, name, shortNameCurrency, sumCurrency, sum, nameType, nameGroup, nameSendingWay, 
+                           dateSigningCompany, dateSending, dateSigningCustomer, dateReceiving, dateTo, dateClosing, note, textString
+    ORDERS date(o)
+    
+    FILTERGROUP active
+        FILTER 'Активные' active(o) DEFAULT
+    
+    LIST Contract OBJECT o
+;
+
+NAVIGATOR {
+    contractFolder {
+        NEW contracts; 
+    }
+}
+
+defaultCompany = DATA LegalEntity();
+nameDefaultCompany 'Компания по умолчанию' () = name(defaultCompany());
+
+CONSTRAINT defaultCompany() AND NOT isCompany(defaultCompany()) CHECKED BY defaultCompany[] MESSAGE 'Компания по умолчанию не является компанией';
+
+EXTEND FORM options PROPERTIES nameDefaultCompany();
+DESIGN options { commons { MOVE PROPERTY (nameDefaultCompany()); } }
+
+WHEN LOCAL SET (Contract c IS Contract) AND NOT CHANGED(company(c))DO {
+    company(c) <- defaultCompany();
+}

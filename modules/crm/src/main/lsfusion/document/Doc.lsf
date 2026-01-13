@@ -1,0 +1,112 @@
+MODULE Doc;
+
+REQUIRE Customer, LegalEntity;
+
+NAMESPACE Doc;
+
+NAVIGATOR {
+    NEW FOLDER contractFolder 'Документы' BEFORE masterData WINDOW toolbar IMAGE 'document.png' { }
+}
+
+CLASS ABSTRACT Document 'Документ';
+
+id 'Код' = ABSTRACT STRING[15] (Document) IN id CHARWIDTH 5;
+number 'Номер' = ABSTRACT STRING[15](Document) IN id CHARWIDTH 10;
+date 'Дата' = ABSTRACT DATE (Document) IN id;
+name 'Наименование' = ABSTRACT ISTRING[150](Document) IN id CHARWIDTH 20;
+dateSigningCompany 'Дата подписания компанией' = ABSTRACT DATE (Document);
+dateSending 'Дата отправки' = ABSTRACT DATE (Document);
+dateSigningCustomer 'Дата подписания клиентом' = ABSTRACT DATE (Document);
+dateReceiving 'Дата получения' = ABSTRACT DATE (Document);
+dateClosing 'Дата закрытия' = ABSTRACT DATE (Document);
+note 'Примечание' = ABSTRACT ISTRING[250](Document);
+file 'Файл' = ABSTRACT FILE (Document);
+sum 'Сумма' = ABSTRACT NUMERIC[16,5](Document);
+paid 'Оплачено' = ABSTRACT NUMERIC[16,5](Document);
+balance 'Остаток' (Document d) = sum(d) (-) paid(d);
+dateLastPaid 'Дата последней оплаты' = ABSTRACT DATE (Document);
+description 'Описание' = ABSTRACT ISTRING[250] (Document) CHARWIDTH 25;
+fileName 'Имя файла' = ABSTRACT ISTRING[250](Document);
+text 'Текст' = ABSTRACT TEXT (Document);
+
+customer = ABSTRACT Customer (Document);
+nameCustomer 'Клиент' (Document d) = name(customer(d));
+
+legalEntity = ABSTRACT LegalEntity(Document);
+nameLegalEntity 'Организация' (Document d) = name(legalEntity(d)); 
+fullNameLegalEntity 'Организация' (Document d) = overName(legalEntity(d)); 
+
+company = ABSTRACT LegalEntity(Document);
+nameCompany 'Компания' (Document d) = name(company(d)); 
+
+CLASS DocType 'Вид документа';
+name 'Наименование' (DocType d) = staticCaption(d) IF d IS DocType CHARWIDTH 21;
+
+FORM dialogDocTypes 'Типы документа'
+    OBJECTS d = DocType
+    PROPERTIES READONLY name(d)
+    
+    LIST DocType OBJECT d
+;
+
+docType = ABSTRACT DocType(Document);
+nameDocType 'Вид документа' (Document d) = name(docType(d));
+
+WHEN LOCAL SET (Document d IS Document) AND NOT date(d) DO {
+    date(d) <- currentDate();    
+}
+
+CLASS SendingWay 'Способ отправки документа';
+TABLE sendingWay(SendingWay);
+
+name 'Наименование' = DATA STRING[50](SendingWay) CHARWIDTH 15;
+mail 'Почтой' = DATA BOOLEAN (SendingWay);
+
+FORM contractSendingWay 'Способ отправки документа'
+    OBJECTS o = SendingWay PANEL
+    PROPERTIES(o) name, mail
+    
+    EDIT SendingWay OBJECT o
+;
+
+FORM contractSendingWays 'Способы отправки документа'
+    OBJECTS o = SendingWay
+    PROPERTIES(o) READONLY name, mail
+    PROPERTIES (o) NEWSESSION NEW, EDIT, DELETE
+    
+    LIST SendingWay OBJECT o
+;
+
+sendingWay = ABSTRACT SendingWay(Document);
+nameSendingWay 'Способ отправки документа' (Document d) = name(sendingWay(d));
+
+sumCurrency 'Сумма в валюте' = ABSTRACT NUMERIC[16,5](Document);
+paidCurrency 'Оплачено в валюте' = ABSTRACT NUMERIC[16,5](Document);
+inCurrency 'В валюте' = ABSTRACT BOOLEAN (Document);
+currency = ABSTRACT Currency(Document);
+shortNameCurrency 'Валюта (сокр.)' (Document d) = shortName(currency(d));
+
+backgroundCurrency (Document d) = RGB(232,232,255) IF inCurrency(d);
+
+FORM dialogDocuments 'Документы'
+    OBJECTS d = Document
+    PROPERTIES (d) READONLY date, nameDocType, number, name, nameCompany, nameCustomer, nameLegalEntity
+    ORDERS date(d)
+    
+    LIST Document OBJECT d
+;
+
+DESIGN dialogDocuments {
+    size = (810, 600);
+}
+
+CLASS ABSTRACT Type 'Тип документа';
+TABLE type(Type);
+
+name 'Наименование' = ABSTRACT ISTRING[100](Type) CHARWIDTH 15;
+
+docType = ABSTRACT DocType(Type);
+nameDocType 'Вид документа' (Type t) = name(docType(t));
+
+type = ABSTRACT Type(Document);
+nameType 'Тип документа' (Document d) = name(type(d));

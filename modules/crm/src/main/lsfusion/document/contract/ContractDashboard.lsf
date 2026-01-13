@@ -1,0 +1,144 @@
+MODULE ContractDashboard;
+
+REQUIRE PaymentAct, Dashboard, ContractFile, AgreementFile, ActFile, DebtAgreement, ActEvent, CustomerTag;
+
+NAMESPACE Contract;
+
+close 'Закрыть' (Contract c) {
+    NEWSESSION {
+        dateClosing(c) <- currentDate();
+        APPLY;
+    }
+} TOOLBAR CONFIRM;
+
+showCustomerDashboard 'Работа с клиентом' (Contract c) { show(customer(c)); }
+
+filterContractType = DATA LOCAL ContractType();
+nameFilterContractType 'Тип договора' () = name(filterContractType());
+
+filterCustomer = DATA LOCAL Customer();
+nameFilterCustomer 'Клиент' () = name(filterCustomer());
+
+CONSTRAINT filterCustomer() AND NOT [GROUP SUM 1 BY customer(Contract c)](filterCustomer()) CHECKED BY filterCustomer[] MESSAGE 'По клиенту нет договоров';
+
+tags 'Тэги клиента' (Contract c) = tags(customer(c));
+
+FORM contractDashboard 'Работа с договорами'
+    PROPERTIES () nameFilterContractType, nameFilterCustomer
+    OBJECTS o = Contract LAST 
+    PROPERTIES(o) READONLY id, nameCustomer, nameLegalEntity, nameCompany, number, date, name, tags,
+                           shortNameCurrency, 
+                           sumCurrency BACKGROUND backgroundCurrency(o), paidCurrency BACKGROUND backgroundCurrency(o), 
+                           sum, paid, dateLastPaid,
+                           sumMonth, 
+                           nameType, nameGroup, nameSendingWay, 
+                           dateSigningCompany, dateSending, dateSigningCustomer, dateReceiving, dateTo, dateClosing, note, textString, text PANEL, terms PANEL
+    PROPERTIES(o) loadFileApply, openFile SHOWIF TRUE IF file(o), close SHOWIF NOT dateClosing(o), showCustomerDashboard TOOLBAR SHOWIF customer(o)
+    PROPERTIES(o) NEWSESSION NEW, EDIT, DELETE
+    ORDERS date(o)
+    FILTERS type(o) == filterContractType() OR NOT filterContractType(), customer(o) == filterCustomer() OR NOT filterCustomer()
+    
+    FILTERGROUP paid FILTER 'Не оплачен' paid(o) < sum(o)
+                     FILTER 'Оплачен' paid(o) >= sum(o)
+    
+    FILTERGROUP activeContract
+        FILTER 'Активные' NOT dateClosing(o) <= currentDate() DEFAULT
+    
+    OBJECTS ag = Agreement LAST 
+    PROPERTIES (ag) READONLY id, number, date, name, nameType, sum, paid, sumCurrency BACKGROUND backgroundCurrency(ag), 
+                             paidCurrency BACKGROUND backgroundCurrency(ag), balance, nameSendingWay, dateSending, dateReceiving, dateClosing, note, textString
+    PROPERTIES (ag) openFile DRAW ag TOOLBAR SHOWIF TRUE IF file(o)
+    PROPERTIES (ag) NEWSESSION edit
+    ORDERS date(ag)
+    FILTERS contract(ag) == o
+    FILTERGROUP activeAg FILTER 'Активные' active(ag) DEFAULT 
+    
+    OBJECTS ac = Act LAST 
+    PROPERTIES (ac) READONLY id, numberAgreement, number, date, fromDate, toDate, name, nameType, sum, paid, sumCurrency BACKGROUND backgroundCurrency(ac), 
+                             paidCurrency BACKGROUND backgroundCurrency(ac), balance, nameSendingWay, dateSending, dateReceiving, dateClosing, note, textString
+    PROPERTIES (ac) openFile DRAW ac TOOLBAR SHOWIF TRUE IF file(o)
+    PROPERTIES (ac) NEWSESSION edit
+    ORDERS date(ac)
+    FILTERS contract(ac) == o
+    FILTERGROUP activeAc FILTER 'Активные' active(ac) DEFAULT 
+    
+    OBJECTS p = Payment LAST 
+    PROPERTIES(p) READONLY id, numberAgreement, numberAct, number, date, year, monthNumber, nameType, sum, shortNameCurrency, sumCurrency, note
+    PROPERTIES(p) NEWSESSION EDIT 
+    ORDERS date(p)
+    FILTERS contract(p) == o
+    
+    OBJECTS e = Event
+    PROPERTIES(e) READONLY id, name, nameType, nameCustomer, nameLegalEntity, nameEmployee, nameContact, date, time, dateNext, descriptionString, additionString
+    ORDERS date(e) DESC 
+    FILTERGROUP f FILTER 'По договору' contract(e) == o DEFAULT 
+                  FILTER 'По организации' legalEntity(e) == legalEntity(o)
+                  FILTER 'По клиенту' customer(e) == customer(o)
+    
+    OBJECTS d = Debt
+    PROPERTIES (d) READONLY date, sum, sumCurrency, paid, note
+    PROPERTIES DRAW o TOOLBAR recalcCurrencyDebts()
+    ORDERS date(o)
+    FILTERS contract(d) == o
+;
+
+DESIGN contractDashboard {
+    OBJECTS {
+        NEW filter FIRST {
+            caption = 'Фильтры';
+            horizontal = TRUE;
+            MOVE PROPERTY (nameFilterContractType());
+            MOVE PROPERTY (nameFilterCustomer());
+        }
+        NEW contract AFTER filter {
+            MOVE BOX (o);
+            fill = 1;
+            NEW tab AFTER BOX (o) {
+                tabbed = TRUE;
+                fill = 1;
+                NEW content {
+                    caption = 'Содержание';
+                    fill = 1;
+                    horizontal = TRUE;
+                    NEW text {
+                        caption = 'Текст';
+                        fill = 1;
+                        MOVE PROPERTY (text(o)) {
+                            fill = 1;
+                            caption = ''; 
+                        }
+                        NEW file {
+                            horizontal = TRUE;
+                            caption = 'Файл документа';
+                            MOVE PROPERTY (loadFileApply(o));
+                            MOVE PROPERTY (openFile(o));
+                        }
+                    }
+                    NEW terms {
+                        caption = 'Условия';
+                        fill = 1;
+                        MOVE PROPERTY (terms(o)) { 
+                            caption = '';
+                            fill = 1;
+                        }
+                    }
+                }
+                MOVE BOX (ag);
+                MOVE BOX (ac);
+                MOVE BOX (p) {
+                    caption = 'Платежи';
+                }
+                MOVE BOX (e) { caption = 'События'; }
+                NEW debt {
+                    caption = 'Задолженность';
+                    MOVE BOX (d);
+                }
+            }
+        }
+    }
+}
+NAVIGATOR {
+    dashboard {
+        NEW contractDashboard;
+    }
+}

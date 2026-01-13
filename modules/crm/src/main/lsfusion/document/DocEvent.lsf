@@ -1,0 +1,17 @@
+MODULE DocEvent;
+
+REQUIRE Event, Doc;
+
+NAMESPACE Doc;
+
+addEvent ABSTRACT LIST (Event, Document);
+
+document = ABSTRACT Document(Event);
+nameDocument 'Документ' (Event e) = description(document(e));
+
+addEventDoc 'Добавить' (Document d) {
+    NEWSESSION NEW e = Event {
+        addEvent(e, d);
+        SHOW event OBJECTS o = e DOCKED;
+    }
+} IMAGE 'add.png'  CHANGEKEY 'INSERT' HIDE;

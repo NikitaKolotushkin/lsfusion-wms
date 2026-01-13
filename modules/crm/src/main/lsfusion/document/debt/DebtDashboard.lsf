@@ -1,0 +1,322 @@
+MODULE DebtDashboard;
+
+REQUIRE DebtAgreement, Act, ActWord, DebtEvent, DebtEmailTemplate;
+
+NAMESPACE Contract;
+
+actTemplate = DATA Template (Contract);
+nameActTemplate 'Шаблон для акта' (Contract c) = name(actTemplate(c));
+
+FORM dialogActTemplates 'Шаблоны Word'
+    OBJECTS t = Template
+    PROPERTIES (t) READONLY name, id
+    FILTERS GROUP SUM 1 IF in(ActType c, t)
+;
+
+changeActTemplate (Contract c) {
+    DIALOG dialogActTemplates OBJECTS t INPUT NULL DO {
+        actTemplate(c) <- t;
+    }
+}
+
+EXTEND FORM contract PROPERTIES nameActTemplate(o) ON CHANGE changeActTemplate(o);  
+
+DESIGN contract {
+    add {
+        MOVE PROPERTY (nameActTemplate(o));
+    }
+}
+
+created = DATA LOCAL BOOLEAN (Act);
+text 'Значение' = DATA LOCAL TEXT (ISTRING[100]);
+in (ISTRING[100] key) = GROUP SUM 1 IF required(TemplateEntry te) AND [GROUP SUM 1 IF created(Act a) BY actTemplate(contract(a))](template(te)) BY key(te);
+
+createActFiles 'Сформировать' (DATE dd, DATE df, DATE dt) {
+    IF NOT (GROUP SUM 1 IF in(ISTRING[100] key) AND NOT text(key)) THEN {
+        FOR created(Act a) DO {
+            date(a) <- dd;
+            fromDate(a) <- df;
+            toDate(a) <- dt;
+            createActTemplate(a, actTemplate(contract(a)));
+            FOR in(ISTRING[100] key) AND text(key) DO {
+                value(TemplateEntry d) <- text(key) WHERE key(d) = key AND template(d) == actTemplate(contract(a));
+            }
+            resultTemplate() <- NULL;
+            process(actTemplate(contract(a)));
+            NEW cf = DocumentFile {
+                document(cf) <- a;
+                file(cf) <- FILE (resultTemplate());
+                dateTime(cf) <- currentDateTime();
+                user(cf) <- currentUser();
+            } 
+        }
+        APPLY;
+        formOk();
+    }
+    ELSE MESSAGE 'Заполнены не все обязательные поля' NOWAIT;
+}
+
+FORM requiredTemplateEntries 'Обязательные поля'
+    OBJECTS dates = (d = DATE, df = DATE, dt = DATE) PANEL 
+    PROPERTIES dd 'Дата акта' = VALUE (d), ddf 'Дата с' = VALUE (df), ddt 'Дата по' = VALUE (dt)
+    OBJECTS t = ISTRING[100]
+    PROPERTIES (t) 'Параметр' = VALUE READONLY, text
+    FILTERS in(t)
+    PROPERTIES createActFiles(d, df, dt)
+;
+
+DESIGN requiredTemplateEntries {
+    NEW head FIRST {
+        horizontal = TRUE;
+        MOVE BOX (dates);
+        NEW period AFTER BOX (dates) {
+            caption = 'Период оказания услуг';
+            horizontal = TRUE;
+            MOVE PROPERTY (ddf);
+            MOVE PROPERTY (ddt);
+        }
+    }
+    BOX (t) { caption = 'Обязательные поля'; }
+    MOVE TOOLBARBOX {
+        TOOLBARRIGHT {
+            MOVE PROPERTY (createActFiles(d, df, dt)) AFTER PROPERTY (formOk()) { alignment = STRETCH; }
+            REMOVE PROPERTY (formOk());
+            REMOVE PROPERTY (formApply());
+            REMOVE PROPERTY (formCancel());
+        }
+    }
+}
+
+actType = DATA ActType (Agreement);
+nameActType 'Тип акта' (Agreement a) = name(actType(a));
+
+EXTEND FORM agreement 
+    PROPERTIES(o) nameActType
+;
+
+DESIGN agreement {
+    row3 {
+        NEW add2 {
+            horizontal = TRUE;
+            caption = 'Необязательные параметры'; 
+            MOVE PROPERTY(nameActType(o)) {charWidth = 30;} 
+        }
+    }
+}
+
+
+in 'Отм.' = DATA LOCAL BOOLEAN (Debt);
+
+additional ABSTRACT LIST (Act); 
+
+createActs 'Создать акты' () {
+
+    LOCAL copy = BOOLEAN ();
+    
+    IF (GROUP SUM 1 IF in(Debt d) AND NOT act(d)) THEN NEWSESSION NESTED (in[Debt]) {
+        
+        ASK 'Скопировать текст и название?' DO {
+            copy() <- TRUE;
+        }
+        //по соглашениям
+        FOR [GROUP SUM 1 IF in(Debt d) AND NOT act(d) BY contract(d), agreement(d)](Contract c, Agreement ag) DO NEW a = Act {
+            act(Debt d) <- a WHERE in(d) AND NOT act(d) AND contract(d) == c AND agreement(d) == ag;
+            contract(a) <- c;
+            agreement(a) <- ag;
+            date(a) <- currentDate();
+            sum(a) <- GROUP SUM sum(Debt d) IF in(d) AND act(d) == a;
+            number(a) <- ISTRING[15] ([GROUP MAX INTEGER(number(Act ac)) BY contract(ac), year(ac)](contract(a), year(a)) (+) 1); 
+            type(a) <- IF actType(ag) THEN actType(ag) ELSE actType(type(c));
+//          type(a) <- actType(type(c));
+            IF copy() THEN {
+                name(a) <- OVERRIDE name(ag), name(c);
+                text(a) <- OVERRIDE text(ag), text(c);
+            }
+            additional(a); 
+            created(a) <- TRUE;
+        }
+        //без соглашения
+        FOR [GROUP SUM 1 IF in(Debt d) AND NOT act(d) AND NOT agreement(d) BY contract(d)](Contract c) DO NEW a = Act {
+            act(Debt d) <- a WHERE in(d) AND NOT act(d) AND contract(d) == c AND NOT agreement(d);
+            contract(a) <- c;
+            date(a) <- currentDate();
+            sum(a) <- GROUP SUM sum(Debt d) IF in(d) AND act(d) == a;
+            number(a) <- ISTRING[15] ([GROUP MAX INTEGER(number(Act ac)) BY contract(ac), year(ac)](contract(a), year(a)) (+) 1); 
+            type(a) <- actType(type(c));
+            IF copy() THEN {
+                name(a) <- name(c);
+                text(a) <- text(c);
+            }
+            additional(a); 
+            created(a) <- TRUE;
+        }
+        
+        IF GROUP SUM 1 IF created(Act a) AND NOT actTemplate(contract(a)) THEN {
+            MESSAGE 'Для договоров № ' + (GROUP CONCAT (OVERRIDE number(contract(Act a)), 'б/н') IF created(a) AND NOT actTemplate(contract(a)), ', ' ORDER date(contract(a))) + ' не выбран шаблон для актов';
+        }
+        
+        DIALOG requiredTemplateEntries OBJECTS d = currentDate() DO
+            in(Debt d) <- NULL;
+    }
+}
+
+createActZip 'Выгрузить акты в zip' () {
+    zipping(STRING[100] f) <- NULL;
+    FOR [GROUP SUM 1 IF in(Debt d) BY act(d)](Act a) DO {
+        zipping(STRING[100] f) <- file(a) WHERE f == fileName(a) + '.doc';
+    }
+    makeZipFile();
+    open(zipped(),'archive');
+}
+
+editAct 'Редактировать акт' (Debt d) {
+    NEWSESSION SHOW act OBJECTS o = act(d) DOCKED;
+}
+
+deleteAct 'Удалить акт' (Debt d) {
+    NEWSESSION {
+        DELETE Act a WHERE a == act(d);
+        APPLY;
+    }
+} CONFIRM;
+
+filterDebtContractType = DATA LOCAL ContractType();
+nameDebtFilterContractType 'Тип договора' () = name(filterDebtContractType());
+
+editContract 'Редактировать договор' (Debt d) {
+    NEWSESSION SHOW contract OBJECTS o = contract(d) DOCKED;
+}
+
+addEvent 'Добавить' (Debt d) {
+    NEWSESSION NEW e = Event {
+        debt(e) <- d;
+        SHOW event OBJECTS o = e DOCKED;
+    }
+} IMAGE 'add.png';
+
+sendEmail 'Отправить email' () {
+    NEWSESSION NESTED (in[Debt]) {
+        FOR in(Debt d) AND act(d) DO {
+            process(act(d), emailTemplate(d));
+            send(emailTemplate(d), email(actContact(legalEntity(contract(d)))));
+        }
+    }
+    in(Debt d) <- NULL;
+}
+
+sumDebt 'Сумма задолженностей' (Customer c, ContractType t, DATE d) = 
+    GROUP SUM sum(Debt dd) (-) paid(dd, d) IF date(dd) <= d AND NOT inactive(dd) BY customer(dd), type(contract(dd));
+sumDebtNoProblem 'Сумма непроблемных задолженностей' (Customer c, ContractType t, DATE d) = 
+    GROUP SUM sum(Debt dd) (-) paid(dd, d) IF date(dd) <= d AND NOT problem(dd) AND NOT inactive(dd) BY customer(dd), type(contract(dd));
+sumDebt 'Сумма неоплаченной задолженности' (Customer c, DATE d) = 
+    GROUP SUM sum(Debt dd) (-) paid(dd, d) IF date(dd) <= d AND NOT inactive(dd) BY customer(dd);
+dateFirstDebt 'Дата ранней неоплаченной задолженности' (Customer c, ContractType t, DATE d) = 
+    GROUP LAST date(Debt dd) ORDER DESC date(dd), dd IF date(dd) <= d AND (sum(dd) (-) paid(dd, d) > 0) AND NOT inactive(dd) BY customer(dd), type(contract(dd));
+dateFirstDebt 'Дата ранней неоплаченной задолженности' (Customer c, DATE d) = 
+    GROUP LAST date(Debt dd) ORDER DESC date(dd), dd IF date(dd) <= d AND (sum(dd) (-) paid(dd, d) > 0) AND NOT inactive(dd) BY customer(dd);
+
+showCustomerDashboard 'Работа с клиентом' (Debt d) { show(customer(d)); }
+
+filterDateFrom 'Дата с' = DATA LOCAL DATE ();
+filterDateTo 'Дата по' = DATA LOCAL DATE ();
+filterCustomerContractType = DATA LOCAL ContractType();
+nameFilterCustomerContractType 'Тип договора' () = name(filterCustomerContractType());
+
+backgroundDebt (Debt d) = RGB (255, 222, 222) IF problem(d);
+
+FORM debtDashboard 'Контроль задолженности'
+    PROPERTIES () filterDateFrom, filterDateTo, nameDebtFilterContractType
+    OBJECTS d = Debt
+    PROPERTIES in(d)
+    PROPERTIES () DRAW d TOOLBAR createActs, createActZip, sendEmail
+    PROPERTIES (d) TOOLBAR SHOWIF act(d) editAct, deleteAct 
+    PROPERTIES (d) READONLY BACKGROUND backgroundDebt(d) date, numberContract, nameContract, nameContractType, nameCustomer, 
+                                                         nameLegalEntity, nameCompany, numberAgreement, nameAgreement, dateAct, 
+                                                         shortNameCurrency, sumCurrency, sum, paid, note
+    PROPERTIES BACKGROUND backgroundDebt(d) numberAct(d) AFTER numberAgreement(d)
+    PROPERTIES (d) TOOLBAR editContract, showCustomerDashboard SHOWIF customer(d)
+    ORDERS date(d)
+    FILTERS  contractType(d) == filterDebtContractType() OR NOT filterDebtContractType(),
+             (date(d) >= filterDateFrom() OR NOT filterDateFrom()) AND (date(d) <= filterDateTo() OR NOT filterDateTo())
+    FILTERGROUP paid FILTER 'Не оплачено' NOT paid(d) >= sum(d) DEFAULT 
+    
+    OBJECTS e = Event
+    PROPERTIES (e) READONLY id, name, nameType, nameEmployee, nameContact, date, time, dateNext, descriptionString, additionString
+    PROPERTIES DRAW e TOOLBAR addEvent(d)
+    PROPERTIES (e) NEWSESSION EDIT 
+    FILTERS debt(e) == d
+    
+    OBJECTS dd = DATE PANEL
+    PROPERTIES VALUE (dd)
+    
+    PROPERTIES nameFilterCustomerContractType()
+    
+    OBJECTS ct = (c = Customer, t = ContractType)
+    PROPERTIES READONLY name(c), name(t), sumDebt(c, t, dd), sumDebtNoProblem(c, t, dd), dateFirstDebt(c, t, dd)
+    FILTERS sumDebt(c, t, dd), t == filterCustomerContractType() OR NOT filterCustomerContractType()
+    ORDERS name(c), name(t)
+    
+    OBJECTS db = Debt
+    PROPERTIES (db) READONLY BACKGROUND backgroundDebt(db) date, numberContract, nameContract, nameLegalEntity, nameCompany, numberAgreement, nameAgreement,
+                             numberAct, shortNameCurrency, sumCurrency, sum, note
+    PROPERTIES BACKGROUND backgroundDebt(db) paid(db, dd) AFTER sum(db)
+    PROPERTIES (db) TOOLBAR showCustomerDashboard SHOWIF customer(db)
+    FILTERS customer(db) == c, date(db) <= dd, type(contract(db)) == t
+//    FILTERGROUP notPaid FILTER 'Неоплаченные' sum(db) (-) paid(db, dd) > 0 DEFAULT
+    FILTERGROUP notPaid FILTER 'Неоплаченные' sum(db) (-) paid(db, dd) != 0 DEFAULT // не оплаченные или переплаченные
+    ORDERS date(db)
+    
+    OBJECTS ev = Event
+    PROPERTIES (ev) READONLY name, nameType, nameEmployee, nameContact, phoneContact, date, time, dateNext, descriptionString, additionString
+    ORDERS date(ev), time(ev)
+    FILTERS customer(ev) == c
+    FILTERGROUP debt FILTER 'По задолженности' debt(ev) == db
+;
+
+DESIGN debtDashboard {
+    OBJECTS {
+        NEW mainTab FIRST {
+            tabbed = TRUE;
+            fill = 1;
+            NEW debts {
+                caption = 'Задолженности';
+                fill = 1;
+                NEW filter FIRST {
+                    caption = 'Фильтры';
+                    horizontal = TRUE;
+                    MOVE PROPERTY (filterDateFrom());
+                    MOVE PROPERTY (filterDateTo());
+                    MOVE PROPERTY (nameDebtFilterContractType());
+                }
+                MOVE BOX (d);
+                MOVE BOX (e);
+            }
+            NEW customers {
+                caption = 'Итоги по клиентам';
+                fill = 1;
+                MOVE BOX (dd) {
+                    caption = 'Параметры';
+                    horizontal = TRUE;
+                    MOVE PROPERTY (nameFilterCustomerContractType());
+                    alignment = START;
+                }
+                NEW bottom {
+                    horizontal = TRUE;
+                    fill = 1;
+                    MOVE BOX (ct) { fill = 1; }
+                    NEW right { 
+                        fill = 2;
+                        MOVE BOX (db);
+                        MOVE BOX (ev);
+                    }
+                }
+            }
+        }
+    }
+}
+
+NAVIGATOR {
+    dashboard {
+        NEW debtDashboard;
+    }
+}

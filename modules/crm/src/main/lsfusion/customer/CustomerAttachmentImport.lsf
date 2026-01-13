@@ -1,0 +1,104 @@
+MODULE CustomerAttachmentImport;
+
+REQUIRE CustomerAttachment, Import;
+
+NAMESPACE Customer;
+
+importAttachments 'Импорт документов клиентов' (FILE f) {
+    LOCAL idAttachment = STRING[15](INTEGER);
+    LOCAL idCustomer = STRING[15](INTEGER);
+    LOCAL number = STRING[15](INTEGER);
+    LOCAL date = DATE (INTEGER);
+    LOCAL type = STRING[100](INTEGER);
+    LOCAL note = STRING[250](INTEGER);
+    LOCAL idEmployee = STRING[15](INTEGER);
+    LOCAL dateCreated = DATE (INTEGER);
+    LOCAL message = STRING[2000] ();
+    LOCAL count = INTEGER ();
+
+    message() <- '';
+    count() <- 0;
+
+    IMPORT XLS NOHEADER FROM f TO idAttachment = B, idCustomer, number, date, type, note, idEmployee, dateCreated;
+
+    FOR imported(INTEGER i) AND i > 1 AND idAttachment(i) AND NOT customer(idCustomer(i)) DO {
+
+        message() <- CONCAT ' ', message() + '\r\nстрока:', (i + 1), 'id:', idAttachment(i), 'Код клиента:', idCustomer(i);
+        count() <- count() + 1;
+    }
+
+    IF count() > 0 THEN {
+        MESSAGE CONCAT ' ', 'Неимпортированные документы, для которых не найден клиент: ', count(), message();
+    }
+
+    FOR [GROUP SUM 1 IF INTEGER i > 1 AND customer(idCustomer(i)) BY idAttachment(i)](STRING[15] id) AND id != '' AND NOT attachment(id) DO NEW c = Attachment {
+        id(c) <- id;
+    }
+
+    FOR [GROUP SUM 1 IF INTEGER i > 1 BY trim(type(i))](STRING[50] type) AND type != '' 
+        AND NOT (GROUP MAX AttachmentType t IF upper(name(t)) == upper(type)) DO NEW t = AttachmentType {
+
+        name(t) <- type; 
+    }
+    
+    FOR Attachment c = attachment(idAttachment(INTEGER i)) AND customer(idCustomer(i)) AND idAttachment(i) != '' AND i > 1 DO {
+        
+        customer(c) <- customer(idCustomer(i));
+        number(c) <- trim(number(i));
+        date(c) <- date(i);
+        type(c) <- GROUP MAX AttachmentType t IF upper(name(t)) == upper(trim(type(i)));
+        note(c) <- trim(note(i));
+        createdUser(c) <- employee(idEmployee(i));
+        createdDate(c) <- dateCreated(i);
+    }
+}
+
+importAttachments 'Импорт документов клиентов' () {
+    NEWSESSION INPUT f = FILE DO {
+        importAttachments(f);
+        APPLY;
+    }
+}
+
+EXTEND FORM migrationData PROPERTIES() importAttachments;
+
+FORM exportAttachments 'Экспорт документов клиентов'
+    OBJECTS p = Attachment
+    PROPERTIES (p) id, idCustomer, number, date, type, note, idCreatedUser, createdDate
+    ORDERS date(p)
+;
+
+exportAttachments 'Экспорт документов клиентов' () {
+    
+    LOCAL file = FILE();
+    
+    PRINT exportAttachments XLS TO file;
+    WRITE CLIENT DIALOG file() TO 'Документы клиентов';
+    open(file(), 'Документы клиентов');
+}
+
+EXTEND FORM migrationData PROPERTIES() exportAttachments;
+
+importAttachmentDocumentsXls 'Импорт документов клиентов' () {
+
+    NEWSESSION {
+        LOCAL id = STRING[15](INTEGER);
+        LOCAL path = STRING[250](INTEGER);
+        LOCAL file = FILE();
+
+        INPUT f = FILE DO {
+            IMPORT XLS NOHEADER FROM f TO id, path;
+
+            FOR Attachment c = attachment(id(INTEGER i)) AND id(i) AND i > 0 DO {
+                TRY {
+                    READ 'file://' + documentPath() + '/' + replace(upper(trim(path(i))), '\\', '/') TO file;
+                    file(c) <- file();
+                }
+            }
+        }
+        APPLY;
+    }
+}
+
+EXTEND FORM migrationData PROPERTIES() importAttachmentDocumentsXls;
+DESIGN migrationData { importDocuments { MOVE PROPERTY(importAttachmentDocumentsXls()); } }

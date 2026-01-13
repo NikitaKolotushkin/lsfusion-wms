@@ -1,0 +1,170 @@
+MODULE TimeEntryTotalDashboard;
+
+REQUIRE TimeEntryExpense, Dashboard, WorkingHours, TimeEntryAbsense;
+
+NAMESPACE Project;
+
+absenceHours 'Кол-во часов' (Employee e, AbsenceReason r, INTEGER y) =  GROUP SUM hours(Absence a, DATE d) BY employee(a), reason(a), extractYear(d) CHARWIDTH 5;
+workedHours (Employee e, AbsenceReason r, INTEGER y) = GROUP SUM workedHours(Absence a) BY employee(a), reason(a), extractYear(date(a));
+absenceDays 'Кол-во дней' (Employee e, AbsenceReason r, INTEGER y) = round1((absenceHours(e, r, y) (-) workedHours(e, r, y)) / 8);
+absenceHours 'Кол-во часов' (AbsenceReason r, INTEGER y) =  GROUP SUM hours(Absence a, DATE d) BY reason(a), extractYear(d);
+absenceHours 'Кол-во часов' (Employee e, INTEGER y) =  GROUP SUM hours(Absence a, DATE d) BY employee(a), extractYear(d);
+absenceDays 'Кол-во дней отсутствия' (Employee e, INTEGER y) = round1(absenceHours(e, y) / 8);
+absenceHours 'Кол-во часов' (Employee e, INTEGER y, Month m) =  GROUP SUM hours(Absence a, DATE d) BY employee(a), extractYear(d), extractMonth(d);
+totalHours 'Часов в месяц' (Employee e, INTEGER y, Month m) = hours(e, y, m) (+) absenceHours(e, y, m);
+totalHours 'Часов за год' (Employee e, INTEGER y) = hours(e, y) (+) absenceHours(e, y);
+
+backgroundHours (Employee e, INTEGER y, Month m) = IF totalHours(e, y, m) < monthHours(y, m) THEN RGB (255, 200, 200);
+backgroundTotalHours (Employee e, DATE d) = IF absenceHours(e, d) THEN RGB (255, 255, 200);
+
+workedHours 'Трудозатраты' (Employee e, DATE d) = GROUP SUM hours(TimeEntry t) IF absense(t) BY employee(t), date(t) CHARWIDTH 2;
+totalHours 'Всего часов у сотрудника' (Employee e, DATE d) = hours(e, d) (+) absenceHours(e, d) (-) workedHours(e, d) CHARWIDTH 2;
+
+hoursEmptyProjects 'Часов за год (по проектам без клиента)' (Employee e, INTEGER y) = GROUP SUM hours(TimeEntry t) IF NOT customer(project(t)) BY employee(t), year(t);
+percentEmptyProjects 'Процент отмеченного времени по проектам без клиента' (Employee e, INTEGER y) = round0(hoursEmptyProjects(e, y) / totalHours(e, y) * 100);
+
+FORM timeEntryDashboard 'Контроль отмеченного времени'
+    
+    OBJECTS my = DATE PANEL
+    PROPERTIES yearMonth = VALUE(my) CUSTOM 'customInputMonth' 
+    
+    OBJECTS m = Month PANEL, y = INTEGER PANEL
+    PROPERTIES READONLY monthHours(y, m)
+    FILTERS y = extractYear(my), m = extractMonth(my) 
+    
+    OBJECTS d = DATE 
+    OBJECTS e = Employee
+    PROPERTIES READONLY name(e), totalHours(e, y, m) BACKGROUND backgroundHours(e, y, m), totalHours(e, d) COLUMNS (d) HEADER extractDay(d) BACKGROUND backgroundTotalHours(e, d)
+    PROPERTIES extractDay(d) SHOWIF NULL 
+    ORDERS extractDay(d), name(e)
+    
+    FILTERGROUP e FILTER 'С отметкой' totalHours(e, y, m) DEFAULT 
+                  FILTER 'Активные' active(e)
+                  
+    FILTERS iterate(d, toDateFormat('01' + lpad(TEXT (number(m)), 2, '0') + y, 'DDMMYYYY'),
+                                    lastDayOfMonth(toDateFormat('01' + lpad(TEXT (number(m)), 2, '0') + y, 'DDMMYYYY')))
+    
+    OBJECTS p = Project
+    PROPERTIES READONLY name(p), hours(e, p, y, m)
+    ORDERS hours(e, p, y, m) DESC
+    FILTERS hours(e, p, y, m)
+    
+    OBJECTS t = TimeEntry
+    PROPERTIES (t) READONLY id, hours, commentsString, date, nameActivity, nameProject, nameCustomer, numberIssue, nameIssue
+    ORDERS date(t)
+    FILTERS employee(t) == e, month(t) == m, year(t) == y
+    FILTERGROUP project FILTER 'По проекту' project(t) == p DEFAULT 
+    
+    OBJECTS a = Absence
+    PROPERTIES (a) READONLY id, nameEmployee, nameReason, dateFrom, dateTo, hours, workingHours, date, note
+    ORDERS date(a)
+    FILTERS employee(a) == e, dateFrom(a) <= lastDayOfMonth(d) AND dateTo(a) >= firstDayOfMonth(d)
+
+    OBJECTS ad = DATE
+    PROPERTIES READONLY VALUE(ad), extractDOWName(ad), hours(a, ad)
+    FILTERS hours(a, ad)
+    
+    OBJECTS yy = INTEGER PANEL 
+    PROPERTIES year1 'Год' = VALUE (yy)
+    
+    OBJECTS r = AbsenceReason
+    OBJECTS ee = Employee
+    PROPERTIES READONLY name(ee), totalHours(ee, yy), percentEmptyProjects(ee, yy), absenceDays(ee, yy), absenceDays(ee, r, yy) COLUMNS (r) HEADER name(r)
+    FILTERS absenceHours(r, yy)
+    
+    OBJECTS ab = Absence
+    PROPERTIES (ab) READONLY id, nameEmployee, nameReason, dateFrom, dateTo, hours, workedHours, workingHours, date, note
+    ORDERS date(ab)
+    FILTERS employee(ab) == ee, extractYear(dateFrom(ab)) == yy OR extractYear(dateTo(ab)) == yy
+    
+    OBJECTS pp = Project
+    PROPERTIES READONLY name(pp), hours(ee, pp, yy)
+    ORDERS hours(ee, pp, yy)
+    FILTERS hours(ee, pp, yy)
+        
+    OBJECTS te = TimeEntry
+    PROPERTIES (te) READONLY id, hours, commentsString, date, nameActivity, nameProject, nameCustomer, numberIssue, nameIssue
+    ORDERS date(te)
+    FILTERS employee(te) == ee, year(te) == yy
+    FILTERGROUP project1 FILTER 'По проекту' project(te) == pp DEFAULT 
+    
+    OBJECTS abd = DATE
+    PROPERTIES READONLY VALUE(abd), extractDOWName(abd), hours(ab, abd)
+    FILTERS hours(ab, abd)
+    
+    FILTERGROUP ee FILTER 'С отметкой' absenceHours(ee, yy) DEFAULT 
+                   FILTER 'Активные' active(ee)
+                  
+    EVENTS ON INIT {
+        SEEK timeEntryDashboard.m = extractMonth(currentDate());
+        SEEK timeEntryDashboard.y = extractYear(currentDate());
+        SEEK timeEntryDashboard.yy = extractYear(currentDate());
+    }
+;
+
+DESIGN timeEntryDashboard {
+    OBJECTS {
+        NEW headerTab FIRST {
+            tabbed = TRUE;
+            fill = 1;
+            NEW month {
+                caption = 'За месяц';
+                NEW filterMonth {
+                    horizontal = TRUE;
+                    MOVE PROPERTY (yearMonth) { charWidth = 20; }
+                    MOVE PROPERTY (monthHours(y, m));
+                }
+                MOVE BOX (e); 
+                NEW tab AFTER BOX (e) {
+                    tabbed = TRUE;
+                    fill = 1;
+                    NEW entry {
+                        caption = 'Отметки времени';
+                        horizontal = TRUE;
+                        fill = 1;
+                        MOVE BOX (p) { fill = 1; }
+                        MOVE BOX (t) { fill = 5; }
+                    }
+                    NEW absence {
+                        caption = 'Отсутствие';
+                        horizontal = TRUE;
+                        fill = 1;
+                        MOVE BOX (a) { fill = 5; }
+                        MOVE BOX (ad) { fill = 1; }
+                    }
+                }
+            }
+            NEW year {
+                caption = 'За год';
+                NEW filterYear {
+                    MOVE PROPERTY (year1);
+                }
+                MOVE BOX (ee);
+                NEW tab1 AFTER BOX (ee) {
+                    tabbed = TRUE;
+                    fill = 1;
+                    NEW entry1 {
+                        caption = 'Отметки времени';
+                        horizontal = TRUE;
+                        fill = 1;
+                        MOVE BOX (pp) { fill = 1; }
+                        MOVE BOX (te) { fill = 5; }
+                    }
+                    NEW absence1 {
+                        horizontal = TRUE;
+                        fill = 1;
+                        caption = 'Отсутствие';
+                        MOVE BOX (ab) { fill = 5; }
+                        MOVE BOX (abd) { fill = 1; }
+                    }
+                }
+            }
+        }
+    }
+}
+
+NAVIGATOR {
+    dashboard {
+        NEW timeEntryDashboard;
+    }
+}

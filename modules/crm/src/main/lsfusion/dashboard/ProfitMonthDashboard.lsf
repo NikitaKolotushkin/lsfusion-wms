@@ -1,0 +1,95 @@
+MODULE ProfitMonthDashboard;
+
+REQUIRE PaymentAct, Expense, ProfitDashboard;
+
+PRIORITY Expense;
+
+NAMESPACE Dashboard;
+
+receipt 'Доход' (Month m, INTEGER y) = GROUP SUM sumCurrency(Payment p) IF NOT skipReceipt(p) BY extractMonth(date(p)), extractYear(date(p));
+shipment 'Расход' (Month m, INTEGER y) = GROUP SUM sumCurrency(Expense p) IF NOT skipExpense(type(p)) BY extractMonth(date(p)), extractYear(date(p));
+profit 'Прибыль' (Month m, INTEGER y) = receipt(m, y) (-) shipment(m, y);
+
+receipt 'Доход' (Month m, INTEGER y, ContractType t) = GROUP SUM sumCurrency(Payment p) IF NOT skipReceipt(p) BY extractMonth(date(p)), extractYear(date(p)), type(contract(p));
+receipt 'Доход' (Month m, INTEGER y, ContractGroup t) = GROUP SUM sumCurrency(Payment p) IF NOT skipReceipt(p) BY extractMonth(date(p)), extractYear(date(p)), group(contract(p));
+shipment 'Расход' (Month m, INTEGER y, ExpenseType t) = GROUP SUM sumCurrency(Expense p) IF NOT skipExpense(type(p)) BY extractMonth(date(p)), extractYear(date(p)), type(p);
+receiptOther 'Прочее' (Month m, INTEGER y) = GROUP SUM sumCurrency(Payment p) IF NOT type(contract(p)) AND NOT skipReceipt(p) BY extractMonth(date(p)), extractYear(date(p));
+receiptOtherGroups 'Без группы' (Month m, INTEGER y) = GROUP SUM sumCurrency(Payment p) IF NOT group(contract(p)) AND NOT skipReceipt(p) BY extractMonth(date(p)), extractYear(date(p));
+shipmentOther 'Прочее' (Month m, INTEGER y) = GROUP SUM sumCurrency(Expense p) IF NOT type(p) AND NOT skipExpense(type(p)) BY extractMonth(date(p)), extractYear(date(p));
+receipt 'Доход' (INTEGER yf, INTEGER yt, ContractType t) = GROUP SUM sumCurrency(Payment p) IF year(p) >= yf AND year(p) <= yt AND NOT skipReceipt(p) BY type(contract(p));
+receipt 'Доход' (INTEGER yf, INTEGER yt, ContractGroup t) = GROUP SUM sumCurrency(Payment p) IF year(p) >= yf AND year(p) <= yt AND NOT skipReceipt(p) BY group(contract(p));
+shipment 'Расход' (INTEGER yf, INTEGER yt, ExpenseType t) = GROUP SUM sumCurrency(Expense p) IF extractYear(date(p)) >= yf AND extractYear(date(p)) <= yt AND NOT skipExpense(type(p)) BY type(p);
+receipt 'Доход' (DATE df, DATE dt, ContractType t) = GROUP SUM sumCurrency(Payment p) IF date(p) >= df AND date(p) <= dt AND NOT skipReceipt(p) BY type(contract(p));
+shipment 'Расход' (DATE df, DATE dt, ExpenseType t) = GROUP SUM sumCurrency(Expense p) IF date(p) >= df AND date(p) <= dt AND NOT skipExpense(type(p)) BY type(p);
+
+FORM profitMonthDashboard 'Прибыль по месяцам'
+//    OBJECTS dates = (df = DATE, dt = DATE) PANEL 
+//    PROPERTIES VALUE (df), VALUE (dt)
+    
+    OBJECTS years = (yf = INTEGER, yt = INTEGER) PANEL
+    PROPERTIES 'Год с' = VALUE (yf), 'Год по' = VALUE (yt)
+    
+    OBJECTS ct = ContractType
+    OBJECTS cg = ContractGroup
+    OBJECTS et = ExpenseType
+    OBJECTS my = (m = Month, y = INTEGER)
+    PROPERTIES READONLY number(m), 'Месяц' = name(m), year 'Год' = VALUE (y), receipt(m, y) BACKGROUND backgroundReceipt(), 
+                        shipment(m, y) BACKGROUND backgroundShipment(), profit(m, y),
+                        receipt(m, y, ct) COLUMNS (ct) HEADER name(ct) BACKGROUND backgroundReceipt(), receiptOther(m, y) BACKGROUND backgroundReceipt(),
+                        receipt(m, y, cg) COLUMNS (cg) HEADER name(cg) BACKGROUND backgroundGroup(), receiptOtherGroups(m, y) BACKGROUND backgroundGroup(),
+                        shipment(m, y, et) COLUMNS (et) HEADER name(et) BACKGROUND backgroundShipment(), shipmentOther(m, y) BACKGROUND backgroundShipment()
+    ORDERS year, number(m)
+    FILTERS y >= yf AND y <= yt, receipt(m, y) OR shipment(m, y), receipt(yf, yt, ct), shipment(yf, yt, et)
+    
+    OBJECTS p = Payment
+    PROPERTIES (p) READONLY id, nameLegalEntity, nameCustomer, numberContract, nameTypeContract, nameGroupContract, numberAct, number, date, 
+                            year, monthNumber, nameType, sum, shortNameCurrency, sumCurrency BACKGROUND backgroundReceipt(), note
+    PROPERTIES (p) NEWSESSION EDIT
+    FILTERS year(p) == y, extractMonth(date(p)) == m, NOT skipReceipt(p)
+    
+    OBJECTS e = Expense
+    PROPERTIES (e) READONLY nameCompany, nameLegalEntity, nameCustomer, date, datePayment, nameType, sum, shortNameCurrency, 
+                            sumCurrency BACKGROUND backgroundShipment(), noteString
+    FILTERS extractYear(date(e)) == y, extractMonth(date(e)) == m, NOT skipExpense(type(e))
+    
+    OBJECTS ctt = ContractType
+    PROPERTIES READONLY name(ctt), receipt(yf, yt, ctt)
+    FILTERS receipt(yf, yt, ctt)
+    
+    OBJECTS cgt = ContractGroup
+    PROPERTIES READONLY name(cgt), receipt(yf, yt, cgt)
+    FILTERS receipt(yf, yt, cgt)
+    
+    OBJECTS ett = ExpenseType
+    PROPERTIES READONLY name(ett), shipment(yf, yt, ett)
+    FILTERS shipment(yf, yt, ett)
+        
+    EVENTS ON INIT {
+        SEEK profitMonthDashboard.years OBJECTS yf = extractYear(currentDate()), yt = extractYear(currentDate());
+    }
+;
+
+DESIGN profitMonthDashboard {
+    OBJECTS {
+        NEW tab AFTER BOX (my) {
+            tabbed = TRUE;
+            fill = 1;
+            MOVE BOX (p);
+            MOVE BOX (e);
+            NEW total {
+                caption = 'Итого';
+                tabbed = TRUE;
+                fill = 1;
+                MOVE BOX (ctt) { caption = 'Доход по видам договоров'; }
+                MOVE BOX (cgt) { caption = 'Доход по группам договоров'; }
+                MOVE BOX (ett) { caption = 'Расход по видам оплат'; }
+            }
+        }
+    }
+}
+
+NAVIGATOR {
+    dashboard {
+        NEW profitMonthDashboard;
+    }
+}

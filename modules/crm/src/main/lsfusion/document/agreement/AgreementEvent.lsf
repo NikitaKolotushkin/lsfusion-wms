@@ -1,0 +1,29 @@
+MODULE AgreementEvent;
+
+REQUIRE Agreement, ContractEvent, DocEvent;
+
+NAMESPACE Agreement;
+
+agreement = DATA Agreement(Event);
+idAgreement 'Код соглашения' (Event e) = id(agreement(e));
+numberAgreement 'Соглашение' (Event e) = number(agreement(e));
+
+EXTEND FORM events PROPERTIES numberAgreement(o);
+EXTEND FORM event PROPERTIES numberAgreement(o);
+
+DESIGN event {
+    docs {
+        MOVE PROPERTY (numberAgreement(o));
+    }
+}
+
+addEvent (Event e, Agreement a) + {
+    agreement(e) <- a;
+}
+
+WHEN LOCAL SETCHANGED (agreement(Event e)) AND NOT CHANGED (contract(e)) DO {
+    contract(e) <- contract(agreement(e));
+}
+
+CONSTRAINT contract(Event e) AND agreement(e) AND NOT contract(agreement(e)) == contract(e) CHECKED BY agreement[Event] MESSAGE 'Соглашение не соответствует договору';
+CONSTRAINT agreement(Event e) AND legalEntity(e) AND NOT legalEntity(e) == legalEntity(agreement(e)) MESSAGE 'Соглашение не соответствует организации';

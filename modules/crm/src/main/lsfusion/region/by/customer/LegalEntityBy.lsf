@@ -1,0 +1,31 @@
+MODULE LegalEntityBy;
+
+REQUIRE LegalEntity;
+
+NAMESPACE LegalEntity;
+
+UNP 'УНП' = DATA STRING[9] (LegalEntity) CHARWIDTH 9 NOFLEX;
+OKPO 'ОКПО' = DATA STRING[20] (LegalEntity) CHARWIDTH 15;
+
+EXTEND FORM legalEntity PROPERTIES(o) UNP, OKPO;
+EXTEND FORM legalEntities PROPERTIES(o) READONLY UNP, OKPO;
+EXTEND FORM dialogLegalEntities PROPERTIES(o) READONLY UNP, OKPO;
+
+DESIGN legalEntity {
+    bank{
+        MOVE PROPERTY (UNP(o));
+        MOVE PROPERTY (OKPO(o));
+    }
+}
+
+branchCode 'Код филиала' = DATA STRING[4] (LegalEntity) CHARWIDTH 5;
+
+EXTEND FORM legalEntity PROPERTIES(o) branchCode;
+EXTEND FORM legalEntities PROPERTIES(o) READONLY branchCode;
+EXTEND FORM dialogLegalEntities PROPERTIES(o) READONLY branchCode;
+
+DESIGN legalEntity {
+    bank{
+        MOVE PROPERTY (branchCode(o)) AFTER PROPERTY (OKPO(o));
+    }
+}

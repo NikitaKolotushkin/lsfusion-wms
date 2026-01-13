@@ -1,0 +1,134 @@
+MODULE Customer;
+
+REQUIRE Utils, MasterData, Address;
+
+NAMESPACE Customer;
+
+CLASS Customer 'Клиент';
+TABLE customer (Customer);
+
+id 'Код' = DATA STRING[15] (Customer) INDEXED CHARWIDTH 5 IN id;
+customer (id) = GROUP AGGR Customer c BY id (c);
+
+inactive 'Неактивный' = DATA BOOLEAN (Customer);
+name 'Наименование' = DATA ISTRING[250] (Customer) CHARWIDTH 20 IN id;
+email 'E-mail' = DATA ISTRING[200] (Customer) CHARWIDTH 20;
+phone 'Тел. приёмной' = DATA ISTRING[50] (Customer) CHARWIDTH 20;
+site 'Сайт' = DATA ISTRING[100] (Customer) CHARWIDTH 20;
+note 'Примечание' = DATA ISTRING[100] (Customer) CHARWIDTH 20;
+dateFrom 'Дата начала' = DATA DATE (Customer);
+
+customer = DATA Customer(Address);
+nameCustomer 'Клиент' (Address a) = name(customer(a));
+physicalAddress (Customer l) = GROUP LAST Address a ORDER a IF in(a, AddressType.physical) BY customer(a);
+namePhysicalAddress 'Физ. адрес' (Customer l) = name(physicalAddress(l));
+legalAddress (Customer l) = GROUP LAST Address a ORDER a IF in(a, AddressType.legal) BY customer(a);
+nameLegalAddress 'Юр. адрес' (Customer l) = name(legalAddress(l));
+address (Customer l) = GROUP LAST Address a ORDER DESC types(a),a BY customer(a);
+nameAddress 'Адрес' (Customer c) = name(address(c));
+info 'Информация' = DATA TEXT (Customer);
+infoString 'Информация' (Customer c) = ISTRING[1000](info(c)) CHARWIDTH 20;
+
+CLASS CustomerGroup 'Группа клиентов';
+TABLE customerGroup(CustomerGroup);
+
+name 'Наименование' = DATA ISTRING[50](CustomerGroup) CHARWIDTH 15;
+
+FORM customerGroup 'Группа клиентов'
+    OBJECTS o = CustomerGroup PANEL
+    PROPERTIES(o) name
+    
+    EDIT CustomerGroup OBJECT o
+;
+
+FORM customerGroups 'Группы клиентов'
+    OBJECTS o = CustomerGroup
+    PROPERTIES(o) READONLY name
+    PROPERTIES (o) NEWSESSION NEW, EDIT, DELETE
+    
+    LIST CustomerGroup OBJECT o
+;
+
+group = DATA CustomerGroup(Customer);
+nameGroup 'Группа клиентов' (Customer c) = name(group(c)) CHARWIDTH 15;
+
+CLASS StatusCustomer 'Статус клиента';
+TABLE StatusCustomer (StatusCustomer);
+
+name 'Наименование' = DATA ISTRING[100] (StatusCustomer) CHARWIDTH 5;
+
+FORM StatusCustomer 'Статус клиента'
+    OBJECTS o = StatusCustomer PANEL
+    PROPERTIES(o) name
+    
+    EDIT StatusCustomer OBJECT o
+;
+
+FORM StatusCustomers 'Статус клиента'
+    OBJECTS o = StatusCustomer
+    PROPERTIES(o) READONLY name
+    PROPERTIES(o) NEWSESSION NEW, EDIT, DELETE
+    
+    LIST StatusCustomer OBJECT o
+;
+
+status = DATA StatusCustomer(Customer);
+nameStatus 'Статус' (Customer c) = name(status(c));
+
+FORM customer 'Клиент'
+    OBJECTS o = Customer PANEL
+    PROPERTIES(o) id, name, nameGroup, nameStatus, email, phone, site, note, dateFrom, inactive, info
+    
+    OBJECTS a = Address
+    PROPERTIES (a) types ON CHANGE changeAddressTypes(a), postcode, region, district, locality, street, houseNumber, officeNumber, extra, NEW, DELETE 
+    ORDERS types(a) DESC 
+    FILTERS customer(a) == o
+    
+    EDIT Customer OBJECT o
+;
+
+FORM customers 'Клиенты'
+    OBJECTS o = Customer
+    PROPERTIES(o) READONLYIF isReadonly() id, name, nameGroup, nameStatus, nameAddress, email, phone, site, note, dateFrom, infoString, inactive
+    PROPERTIES(o) NEWSESSION NEW, EDIT, DELETE
+    ORDERS name(o)
+    
+    FILTERGROUP active FILTER 'Активные' NOT inactive(o) DEFAULT 
+;
+
+@extendFormEditable(customers);
+
+FORM dialogCustomers 'Клиенты'
+    OBJECTS o = Customer
+    PROPERTIES(o) READONLY id, name, nameGroup, nameStatus, nameAddress, email, phone, site, note, dateFrom, infoString, inactive
+    ORDERS name(o)
+    
+    FILTERGROUP active FILTER 'Активные' NOT inactive(o) DEFAULT
+    
+    LIST Customer OBJECT o
+;
+
+merge ABSTRACT LIST (Customer, Customer);
+
+merge 'Объединить' (Customer c) {
+    DIALOG customers OBJECTS o INPUT DO
+        ASK 'Внимание!!! Отмена объединения будет невозможна ! Вы действительно хотите объединить клиента ' + name(c) + ' к клиенту ' + name(o) + '?' DO 
+            NEWSESSION {
+                merge(c, o);
+                DELETE c;
+                APPLY;
+            }
+} 
+
+EXTEND FORM customers
+    PROPERTIES(o) merge TOOLBAR;
+
+NAVIGATOR {
+    masterData {
+        NEW FOLDER customerFolder 'Клиенты' {
+            NEW customers;
+        }
+    }
+}
+
+show 'Работа с клиентом' ABSTRACT LIST (Customer);

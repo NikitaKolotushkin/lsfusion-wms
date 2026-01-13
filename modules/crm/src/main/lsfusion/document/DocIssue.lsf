@@ -1,0 +1,81 @@
+MODULE DocIssue;
+
+REQUIRE Doc, Issue;
+
+NAMESPACE Doc;
+
+document = DATA Document(Issue);
+numberDocument 'Документ' (Issue i) = number(document(i));
+
+CONSTRAINT document(Issue i) AND customer(i) AND NOT customer(document(i)) == customer(i) CHECKED BY document[Issue] MESSAGE 'Клиент задачи не соответствует клиенту документа';
+
+WHEN LOCAL CHANGED (document(Issue i)) AND NOT CHANGED (customer(i)) DO {
+    customer(i) <- customer(document(i));
+}
+
+WHEN DROPPED (Document d IS Document) DO {
+    DELETE Issue i WHERE PREV (document(i)) == d;
+}
+
+EXTEND FORM issues PROPERTIES numberDocument(o);
+EXTEND FORM issue PROPERTIES numberDocument(o);
+
+DESIGN issue {
+    top {
+        MOVE PROPERTY (numberDocument(o));
+    }
+}
+
+CLASS TaskTemplate 'Шаблон задачи';
+TABLE taskTemplate(TaskTemplate);
+
+in 'Вкл.' = DATA BOOLEAN (Type, TaskTemplate);
+
+name 'Наименование' = DATA ISTRING[100] (TaskTemplate) CHARWIDTH 20;
+
+tracker = DATA Tracker(TaskTemplate);
+nameTracker 'Трекер' (TaskTemplate t) = name(tracker(t));
+
+subject 'Тема' = DATA ISTRING[100](TaskTemplate) CHARWIDTH 20;
+
+author = DATA Employee(TaskTemplate);
+nameAuthor 'Автор' (TaskTemplate t) = name(author(t));
+
+assignedTo = DATA Employee(TaskTemplate);
+nameAssignedTo 'Назначена' (TaskTemplate t) = name(assignedTo(t));
+
+FORM createIssue 'Создание задач'
+    OBJECTS t = Type
+    PROPERTIES (t) READONLY nameDocType, name
+    ORDERS nameDocType(t), name(t)
+    
+    OBJECTS tt = TaskTemplate
+    PROPERTIES in(t, tt)
+    PROPERTIES (tt) name, nameTracker, subject, nameAuthor, nameAssignedTo, NEW, DELETE 
+    FILTERGROUP in FILTER 'Отмеченные' in(t, tt)
+    ORDERS name(tt)
+;
+
+DESIGN createIssue {
+    OBJECTS {
+     horizontal = TRUE;
+    }
+}
+
+NAVIGATOR {
+    contractFolder {
+        NEW createIssue; 
+    }
+}
+
+WHEN SET (Document d IS Document AND in(type(d), TaskTemplate t)) DO {
+    NEW i = Issue {
+        tracker(i) <- tracker(t);
+        name(i) <- subject(t);
+        author(i) <- author(t);
+        assignedTo(i) <- assignedTo(t);
+        customer(i) <- customer(d);
+        description(i) <- text(d);
+        document(i) <- d;
+    }
+}

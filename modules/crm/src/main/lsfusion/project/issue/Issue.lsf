@@ -1,0 +1,213 @@
+MODULE Issue;
+
+REQUIRE Project, Employee;
+
+NAMESPACE Project;
+
+CLASS Tracker 'Трекер';
+TABLE tracker (Tracker);
+
+name 'Наименование' = DATA ISTRING[100] (Tracker) CHARWIDTH 15 IN id;
+tracker = GROUP AGGR Tracker p BY name (p);
+
+FORM tracker 'Трекер'
+    OBJECTS o = Tracker PANEL
+    PROPERTIES(o) name
+    
+    EDIT Tracker OBJECT o
+;
+
+FORM trackers 'Трекеры'
+    OBJECTS o = Tracker
+    PROPERTIES(o) READONLY name
+    PROPERTIES(o) NEWSESSION NEW, EDIT, DELETE
+;
+
+FORM dialogTrackers 'Трекеры'
+    OBJECTS o = Tracker
+    PROPERTIES(o) READONLY name
+    
+    LIST Tracker OBJECT o
+;
+
+CLASS IssueStatus 'Статус задачи';
+TABLE issueStatus (IssueStatus);
+
+name 'Наименование' = DATA ISTRING[100] (IssueStatus) CHARWIDTH 15 IN id;
+issueStatus = GROUP AGGR IssueStatus p BY name (p);
+isClosed 'Закрыта' = DATA BOOLEAN (IssueStatus);
+order 'Порядок' = DATA INTEGER (IssueStatus);
+
+FORM issueStatus 'Статус задачи'
+    OBJECTS o = IssueStatus PANEL
+    PROPERTIES(o) name, isClosed, order
+    
+    EDIT IssueStatus OBJECT o
+;
+
+FORM issueStatuses 'Статусы задачи'
+    OBJECTS o = IssueStatus
+    PROPERTIES(o) READONLY order, name, isClosed
+    ORDERS order(o)
+    PROPERTIES(o) NEWSESSION NEW, EDIT, DELETE
+;
+
+FORM dialogIssueStatuses 'Статусы задачи'
+    OBJECTS o = IssueStatus
+    PROPERTIES(o) READONLY order SHOWIF NULL, name, isClosed
+    ORDERS order(o)
+    
+    LIST IssueStatus OBJECT o
+;
+
+CLASS Issue 'Задача';
+TABLE issue (Issue);
+
+id 'Код' = DATA STRING[15] (Issue) INDEXED CHARWIDTH 5 IN id;
+number 'Номер' (Issue s) = INTEGER (id(s)) CHARWIDTH 5;
+
+name 'Тема' = DATA ISTRING[500] (Issue) CHARWIDTH 30;
+description 'Описание' = DATA TEXT (Issue);
+descriptionString 'Описание' (Issue i) = ISTRING[1000](description(i)) CHARWIDTH 30;
+dateTo 'Дата завершения' = DATA DATE (Issue);
+dateTimeCreated 'Дата/время создания' = DATA DATETIME (Issue);
+dateTimeUpdated 'Дата/время обновления' = DATA DATETIME (Issue);
+dateFrom 'Дата начала' = DATA DATE (Issue);
+doneRatio 'Готовность' = DATA INTEGER (Issue);
+estimatedHours 'Оценка трудозатрат' = DATA NUMERIC[7,2](Issue);
+
+project = DATA Project(Issue);
+idProject 'Код проекта' (Issue i) = id(project(i));
+nameProject 'Проект' (Issue i) = name(project(i));
+
+customer = DATA Customer(Issue);
+nameCustomer 'Клиент' (Issue i) = name(customer(i));
+
+merge (Customer from, Customer to) + { customer(Issue i) <- to WHERE customer(i) = from; }
+
+CONSTRAINT project(Issue i) AND customer(i) AND NOT customer(i) == customer(project(i)) CHECKED BY customer[Issue] MESSAGE 'Клиент задачи не совпадает с клиентом проекта';
+CONSTRAINT Issue i IS Issue AND NOT project(i) AND NOT customer(i) MESSAGE 'Для задачи должен быть задан проект или клиент';
+
+WHEN LOCAL SETCHANGED (customer(project(Issue i))) OR SETCHANGED(project(i)) DO {
+    customer(i) <- customer(project(i));
+}
+
+author = DATA CustomUser(Issue);
+nameAuthor 'Автор' (Issue i) = name(author(i)) CHARWIDTH 20;
+loginAuthor 'Логин автора' (Issue i) = login(author(i));
+
+assignedTo = DATA Employee(Issue);
+nameAssignedTo 'Назначена' (Issue i) = name(assignedTo(i)) CHARWIDTH 20;
+loginAssignedTo'Логин, кому назначена' (Issue i) = login(assignedTo(i));
+
+tracker = DATA Tracker(Issue);
+nameTracker 'Трекер' (Issue i) = name(tracker(i));
+
+status = DATA IssueStatus(Issue);
+nameStatus 'Статус' (Issue i) = name(status(i));
+
+count 'Кол-во' (Project p, IssueStatus s) = GROUP SUM 1 BY project(Issue i), status(i);
+count 'Кол-во' (Customer c, IssueStatus s) = GROUP SUM 1 BY customer(Issue i), status(i);
+countActive 'Кол-во' (Customer c, IssueStatus s) = GROUP SUM 1 IF NOT inactive(project(Issue i)) BY customer(i), status(i);
+
+FORM issue 'Задача'
+    OBJECTS o = Issue PANEL
+    PROPERTIES(o) id, nameTracker, nameProject, nameCustomer, name,
+                  nameStatus, nameAssignedTo, doneRatio, 
+                  dateTo, dateFrom, estimatedHours, 
+                  nameAuthor, dateTimeCreated, 
+                  description
+    
+    EDIT Issue OBJECT o
+;
+DESIGN issue {
+    OBJECTS {
+        NEW main { 
+            caption = 'Основные параметры';
+            alignment = STRETCH;
+            NEW top {
+                horizontal = TRUE;
+                alignment = STRETCH;
+                MOVE PROPERTY (id(o));
+                MOVE PROPERTY (nameTracker(o));
+                MOVE PROPERTY (nameCustomer(o));
+                MOVE PROPERTY (nameProject(o));
+            }
+            MOVE PROPERTY (name(o));
+        }
+        NEW params {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            NEW status {
+                fill = 1;
+                caption = 'Статус';
+                MOVE PROPERTY (nameStatus(o));
+                MOVE PROPERTY (nameAssignedTo(o));
+                MOVE PROPERTY (doneRatio(o));
+            }
+            NEW dates {
+                fill = 1;
+                caption = 'Сроки';
+                MOVE PROPERTY (dateFrom(o));
+                MOVE PROPERTY (dateTo(o));
+                MOVE PROPERTY (estimatedHours(o));
+            }
+            NEW author {
+                fill = 1;
+                caption = 'Автор';
+                MOVE PROPERTY (nameAuthor(o)) { focusable = FALSE; }
+                MOVE PROPERTY (dateTimeCreated(o)) { focusable = FALSE; }
+            }
+        }
+        NEW description {
+            caption = 'Описание';
+            fill = 1;
+            MOVE PROPERTY (description(o)) { fill = 1; caption = ''; }
+        }
+    }
+}
+FORM issues 'Задачи'
+    OBJECTS o = Issue LAST 
+    PROPERTIES(o) READONLY number, name, descriptionString, dateTo, dateTimeCreated, dateTimeUpdated, dateFrom, doneRatio, estimatedHours, nameProject, 
+                           nameCustomer, nameAuthor, nameAssignedTo, nameTracker, nameStatus
+    ORDERS dateTimeCreated(o), number(o)
+    PROPERTIES(o) NEWSESSION NEW, EDIT, DELETE
+;
+
+FORM dialogIssues 'Задачи'
+    OBJECTS o = Issue LAST 
+    PROPERTIES(o) READONLY number, name, descriptionString, dateTo, dateTimeCreated, dateTimeUpdated, dateFrom, doneRatio, estimatedHours, nameProject, 
+                           nameAuthor, nameAssignedTo, nameTracker, nameStatus 
+    ORDERS number(o)
+    LIST Issue OBJECT o
+;
+NAVIGATOR {
+    project {
+        NEW trackers;
+        NEW issueStatuses;
+        NEW issues;
+    }
+}
+
+open 'Показать' ABSTRACT (Issue);
+
+changeStatus ABSTRACT (Issue, IssueStatus);
+
+in 'Отм' = DATA LOCAL BOOLEAN (Issue); 
+
+changeStatus 'Изменить статус' (Issue i) {
+    IF NOT GROUP SUM 1 IF in(Issue ii) THEN in(i) <- TRUE; 
+    DIALOG dialogIssueStatuses OBJECTS o INPUT DO {
+        FOR in(Issue ii) DO {
+            NEWSESSION {
+                changeStatus(ii, o);
+                status(ii) <- o;
+                APPLY;
+            }
+        }
+    }
+}
+
+EXTEND FORM issues
+    PROPERTIES(o) in BEFORE number(o), changeStatus TOOLBAR, open TOOLBAR
+;
