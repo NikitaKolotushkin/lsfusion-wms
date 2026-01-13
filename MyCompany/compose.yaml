@@ -11,20 +11,13 @@ services:
     environment:
       - POSTGRES_PASSWORD=11111
 
-  # logics:
-  #   image: lsfusion/mycompany:6.1
-  #   volumes:
-  #     - ./docker-server:/lsfusion
-
-
   server:
     image: lsfusion/server:6.1
     depends_on:
       - db
-      # - logics
     volumes:
       - ./docker-server:/lsfusion
-      - ./modules:/lsfusion/modules 
+      - ./modules:/lsfusion
     environment:
       - DB_SERVER=db
       - DB_PASSWORD=11111

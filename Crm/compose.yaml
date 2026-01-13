@@ -1,0 +1,39 @@
+name: crm
+
+volumes:
+  docker-server:
+
+services:
+  db:
+    image: postgres:latest
+    volumes:
+      - ./docker-db:/var/lib/postgresql
+    environment:
+      - POSTGRES_PASSWORD=11111
+
+  server:
+    image: lsfusion/server:6.1
+    depends_on:
+      - db
+      # - logics
+    volumes:
+      - ./docker-server:/lsfusion
+      - ./modules:/lsfusion/modules
+    environment:
+      - DB_SERVER=db
+      - DB_PASSWORD=11111
+      - USER_SETLANGUAGE=ru
+      - USER_SETCOUNTRY=RU 
+      - JAVA_OPTS=-Xmx10g
+
+  client:
+    image: lsfusion/client:6.1
+    depends_on:
+      - server
+    volumes:
+      - ./docker-client-conf:/usr/local/tomcat/conf/Catalina
+    ports:
+      - "8080:8080"
+    environment:
+      - APP_SERVER=server
+      
