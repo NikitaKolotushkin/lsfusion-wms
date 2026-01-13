@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  tomcat:
+    image: tomcat:9
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./webapps:/usr/local/tomcat/webapps
+    environment:
+      JAVA_OPTS: "-Xmx512m -Xms256m --add-opens=java.base/java.util=ALL-UNNAMED"
+    network_mode: "host"
+    restart: always
